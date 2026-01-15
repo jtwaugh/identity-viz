@@ -7,21 +7,24 @@ default allow := false
 
 # Role hierarchy helper functions
 # OWNER > ADMIN > OPERATOR > VIEWER
+# Note: Role comes from input.user.role (Java structure)
+
+user_role := input.user.role
 
 is_owner if {
-    input.role == "OWNER"
+    user_role == "OWNER"
 }
 
 is_admin_or_higher if {
-    input.role in ["OWNER", "ADMIN"]
+    user_role in ["OWNER", "ADMIN"]
 }
 
 is_operator_or_higher if {
-    input.role in ["OWNER", "ADMIN", "OPERATOR"]
+    user_role in ["OWNER", "ADMIN", "OPERATOR"]
 }
 
 is_viewer_or_higher if {
-    input.role in ["OWNER", "ADMIN", "OPERATOR", "VIEWER"]
+    user_role in ["OWNER", "ADMIN", "OPERATOR", "VIEWER"]
 }
 
 # Helper to check business hours (6 AM - 10 PM)
@@ -91,7 +94,7 @@ decision := {
     "allow": allow,
     "reason": reason,
     "risk_score": input.context.risk_score,
-    "role": input.role,
+    "role": user_role,
     "action": input.action
 }
 

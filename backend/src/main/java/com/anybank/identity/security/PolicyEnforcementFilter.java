@@ -1,8 +1,11 @@
 package com.anybank.identity.security;
 
+import com.anybank.identity.dto.DebugEvent;
+import com.anybank.identity.dto.DebugEvent.EventType;
 import com.anybank.identity.dto.TenantDto.MembershipRole;
 import com.anybank.identity.dto.TenantDto.TenantType;
 import com.anybank.identity.exception.PolicyDeniedException;
+import com.anybank.identity.service.DebugEventService;
 import com.anybank.identity.service.PolicyService;
 import com.anybank.identity.service.PolicyService.PolicyInput;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -22,6 +25,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.time.Instant;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -34,6 +39,7 @@ public class PolicyEnforcementFilter extends OncePerRequestFilter {
 
     private final PolicyService policyService;
     private final ObjectMapper objectMapper;
+    private final DebugEventService debugEventService;
 
     private static final Set<String> SENSITIVE_PATHS = Set.of(
             "/api/accounts/*/transfer",
@@ -60,17 +66,25 @@ public class PolicyEnforcementFilter extends OncePerRequestFilter {
 
         try {
             PolicyInput input = buildPolicyInput(request, jwt);
-            if (input != null && !policyService.checkPolicy(input)) {
-                Integer riskScore = (Integer) request.getAttribute(RiskEvaluationFilter.RISK_SCORE_ATTRIBUTE);
-                throw new PolicyDeniedException(
-                        mapRequestToAction(request),
-                        "Access denied by policy",
-                        riskScore
-                );
+            if (input != null) {
+                boolean allowed = policyService.checkPolicy(input);
+
+                // Emit OPA decision debug event
+                emitPolicyDecisionEvent(input, allowed, request, jwt);
+
+                if (!allowed) {
+                    Integer riskScore = (Integer) request.getAttribute(RiskEvaluationFilter.RISK_SCORE_ATTRIBUTE);
+                    throw new PolicyDeniedException(
+                            mapRequestToAction(request),
+                            "Access denied by policy",
+                            riskScore
+                    );
+                }
             }
             filterChain.doFilter(request, response);
         } catch (PolicyDeniedException e) {
             log.warn("Policy denied: {}", e.getMessage());
+            emitPolicyDeniedEvent(e, request, jwt);
             sendErrorResponse(response, e);
         }
     }
@@ -211,6 +225,107 @@ public class PolicyEnforcementFilter extends OncePerRequestFilter {
         return path.startsWith("/actuator") ||
                path.startsWith("/swagger") ||
                path.startsWith("/v3/api-docs") ||
-               path.startsWith("/auth/");
+               path.startsWith("/auth/") ||
+               path.startsWith("/debug");
+    }
+
+    /**
+     * Emits a debug event for OPA policy decision.
+     */
+    private void emitPolicyDecisionEvent(PolicyInput input, boolean allowed, HttpServletRequest request, Jwt jwt) {
+        try {
+            TenantContext.TenantInfo tenantInfo = TenantContext.getCurrentTenant();
+
+            Map<String, Object> details = new HashMap<>();
+            details.put("action", input.action());
+            details.put("allowed", allowed);
+            details.put("riskScore", input.context().riskScore());
+            details.put("path", request.getRequestURI());
+            details.put("method", request.getMethod());
+
+            // Include policy input for debugging
+            Map<String, Object> policyInput = new HashMap<>();
+            policyInput.put("user", Map.of(
+                    "id", input.user().id() != null ? input.user().id().toString() : "null",
+                    "email", input.user().email() != null ? input.user().email() : "null",
+                    "role", input.user().role() != null ? input.user().role().name() : "null"
+            ));
+            policyInput.put("tenant", Map.of(
+                    "id", input.tenant().id() != null ? input.tenant().id().toString() : "null",
+                    "type", input.tenant().type() != null ? input.tenant().type().name() : "null"
+            ));
+            policyInput.put("resource", Map.of(
+                    "type", input.resource().type(),
+                    "id", input.resource().id() != null ? input.resource().id().toString() : "null"
+            ));
+            policyInput.put("context", Map.of(
+                    "channel", input.context().channel(),
+                    "riskScore", input.context().riskScore(),
+                    "isNewDevice", input.context().isNewDevice()
+            ));
+            details.put("input", policyInput);
+
+            DebugEvent.Actor actor = DebugEvent.Actor.builder()
+                    .email(jwt.getClaimAsString("email"))
+                    .build();
+
+            if (tenantInfo != null) {
+                actor.setUserId(tenantInfo.getUserId());
+                actor.setTenantId(tenantInfo.getTenantId());
+                actor.setRole(tenantInfo.getRole() != null ? tenantInfo.getRole().name() : null);
+            }
+
+            DebugEvent event = DebugEvent.builder()
+                    .id(UUID.randomUUID())
+                    .timestamp(Instant.now())
+                    .type(EventType.OPA)
+                    .action("policy_decision")
+                    .actor(actor)
+                    .details(details)
+                    .build();
+
+            debugEventService.emit(event);
+        } catch (Exception e) {
+            log.warn("Failed to emit policy decision debug event: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Emits a debug event when policy access is denied.
+     */
+    private void emitPolicyDeniedEvent(PolicyDeniedException e, HttpServletRequest request, Jwt jwt) {
+        try {
+            TenantContext.TenantInfo tenantInfo = TenantContext.getCurrentTenant();
+
+            Map<String, Object> details = new HashMap<>();
+            details.put("action", e.getAction());
+            details.put("reason", e.getMessage());
+            details.put("riskScore", e.getRiskScore());
+            details.put("path", request.getRequestURI());
+            details.put("method", request.getMethod());
+
+            DebugEvent.Actor actor = DebugEvent.Actor.builder()
+                    .email(jwt.getClaimAsString("email"))
+                    .build();
+
+            if (tenantInfo != null) {
+                actor.setUserId(tenantInfo.getUserId());
+                actor.setTenantId(tenantInfo.getTenantId());
+                actor.setRole(tenantInfo.getRole() != null ? tenantInfo.getRole().name() : null);
+            }
+
+            DebugEvent event = DebugEvent.builder()
+                    .id(UUID.randomUUID())
+                    .timestamp(Instant.now())
+                    .type(EventType.ERROR)
+                    .action("policy_denied")
+                    .actor(actor)
+                    .details(details)
+                    .build();
+
+            debugEventService.emit(event);
+        } catch (Exception ex) {
+            log.warn("Failed to emit policy denied debug event: {}", ex.getMessage());
+        }
     }
 }

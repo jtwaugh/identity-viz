@@ -35,6 +35,7 @@ public class AuthService {
     private final TenantService tenantService;
     private final UserMapper userMapper;
     private final WebClient.Builder webClientBuilder;
+    private final DebugSessionService debugSessionService;
 
     @Value("${keycloak.url:http://localhost:8080}")
     private String keycloakUrl;
@@ -54,25 +55,52 @@ public class AuthService {
         String email = jwt.getClaimAsString("email");
         String name = jwt.getClaimAsString("name");
 
+        // First try to find by external ID (Keycloak subject)
         return userRepository.findByExternalId(externalId)
                 .orElseGet(() -> {
-                    User newUser = User.builder()
-                            .externalId(externalId)
-                            .email(email != null ? email : externalId + "@unknown.com")
-                            .displayName(name != null ? name : "Unknown User")
-                            .mfaEnabled(false)
-                            .createdAt(Instant.now())
-                            .updatedAt(Instant.now())
-                            .build();
-                    log.info("Creating new user from JWT: {}", email);
-                    return userRepository.save(newUser);
+                    // Fallback: try to find by email and update external ID
+                    // This handles demo users with placeholder external IDs
+                    if (email != null) {
+                        return userRepository.findByEmail(email)
+                                .map(existingUser -> {
+                                    log.info("Updating external ID for existing user: {}", email);
+                                    existingUser.setExternalId(externalId);
+                                    existingUser.setUpdatedAt(Instant.now());
+                                    return userRepository.save(existingUser);
+                                })
+                                .orElseGet(() -> createNewUser(externalId, email, name));
+                    }
+                    return createNewUser(externalId, email, name);
                 });
+    }
+
+    private User createNewUser(String externalId, String email, String name) {
+        User newUser = User.builder()
+                .externalId(externalId)
+                .email(email != null ? email : externalId + "@unknown.com")
+                .displayName(name != null ? name : "Unknown User")
+                .mfaEnabled(false)
+                .createdAt(Instant.now())
+                .updatedAt(Instant.now())
+                .build();
+        log.info("Creating new user from JWT: {}", email);
+        return userRepository.save(newUser);
     }
 
     @Transactional(readOnly = true)
     public UserDto getCurrentUser(Jwt jwt) {
         User user = getOrCreateUser(jwt);
         List<TenantDto> tenants = tenantService.getTenantsForUser(user.getId());
+
+        // Track the session in the debug UI
+        String sessionId = jwt.getClaimAsString("sid");
+        if (sessionId == null) {
+            sessionId = jwt.getId(); // Fall back to JWT ID (jti)
+        }
+        if (sessionId == null) {
+            sessionId = jwt.getSubject(); // Fall back to subject
+        }
+        debugSessionService.startSession(sessionId, user.getId(), user.getEmail());
 
         UserDto userDto = userMapper.toDto(user);
         userDto.setTenants(tenants);

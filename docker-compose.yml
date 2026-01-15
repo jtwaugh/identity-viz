@@ -98,6 +98,7 @@ services:
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
       SPRING_FLYWAY_ENABLED: false
       SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI: http://keycloak:8080/realms/anybank
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI: http://keycloak:8080/realms/anybank/protocol/openid-connect/certs
       KEYCLOAK_JWK_URI: http://keycloak:8080/realms/anybank/protocol/openid-connect/certs
       KEYCLOAK_URL: http://keycloak:8080
       KEYCLOAK_REALM: anybank

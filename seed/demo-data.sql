@@ -19,56 +19,15 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at TIMESTAMP DEFAULT NOW()
 );
 
--- Create enum types
-DO $$ BEGIN
-    CREATE TYPE tenant_type AS ENUM ('CONSUMER', 'SMALL_BUSINESS', 'COMMERCIAL', 'INVESTMENT', 'TRUST');
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
-
-DO $$ BEGIN
-    CREATE TYPE tenant_status AS ENUM ('ACTIVE', 'SUSPENDED', 'CLOSED');
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
-
-DO $$ BEGIN
-    CREATE TYPE membership_role AS ENUM ('OWNER', 'ADMIN', 'OPERATOR', 'VIEWER');
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
-
-DO $$ BEGIN
-    CREATE TYPE membership_status AS ENUM ('INVITED', 'ACTIVE', 'SUSPENDED', 'REVOKED');
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
-
-DO $$ BEGIN
-    CREATE TYPE account_type AS ENUM ('CHECKING', 'SAVINGS', 'MONEY_MARKET', 'CD', 'LOAN', 'CREDIT_LINE');
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
-
-DO $$ BEGIN
-    CREATE TYPE account_status AS ENUM ('ACTIVE', 'FROZEN', 'CLOSED');
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
-
-DO $$ BEGIN
-    CREATE TYPE audit_outcome AS ENUM ('SUCCESS', 'DENIED', 'ERROR');
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
+-- Note: Using VARCHAR instead of PostgreSQL enum types for Hibernate compatibility
 
 -- Tenants Table: Stores organizations/accounts (the contexts)
 CREATE TABLE IF NOT EXISTS tenants (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     external_id VARCHAR(255) UNIQUE NOT NULL,
     name VARCHAR(255) NOT NULL,
-    type tenant_type NOT NULL,
-    status tenant_status DEFAULT 'ACTIVE',
+    type VARCHAR(50) NOT NULL,
+    status VARCHAR(50) DEFAULT 'ACTIVE',
     metadata JSONB,
     created_at TIMESTAMP DEFAULT NOW()
 );
@@ -78,8 +37,8 @@ CREATE TABLE IF NOT EXISTS memberships (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-    role membership_role NOT NULL,
-    status membership_status DEFAULT 'ACTIVE',
+    role VARCHAR(50) NOT NULL,
+    status VARCHAR(50) DEFAULT 'ACTIVE',
     invited_at TIMESTAMP,
     accepted_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT NOW(),
@@ -91,11 +50,11 @@ CREATE TABLE IF NOT EXISTS accounts (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     account_number VARCHAR(20) UNIQUE NOT NULL,
-    account_type account_type NOT NULL,
+    account_type VARCHAR(50) NOT NULL,
     name VARCHAR(255) NOT NULL,
     balance DECIMAL(15,2) DEFAULT 0,
     currency VARCHAR(3) DEFAULT 'USD',
-    status account_status DEFAULT 'ACTIVE',
+    status VARCHAR(50) DEFAULT 'ACTIVE',
     created_at TIMESTAMP DEFAULT NOW()
 );
 
@@ -107,7 +66,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     action VARCHAR(100) NOT NULL,
     resource_type VARCHAR(50) NOT NULL,
     resource_id UUID,
-    outcome audit_outcome NOT NULL,
+    outcome VARCHAR(50) NOT NULL,
     risk_score INTEGER,
     ip_address INET,
     user_agent TEXT,

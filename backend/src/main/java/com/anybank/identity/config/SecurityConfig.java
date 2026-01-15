@@ -1,15 +1,21 @@
 package com.anybank.identity.config;
 
+import com.anybank.identity.security.AuditLoggingFilter;
+import com.anybank.identity.security.CorrelationIdFilter;
 import com.anybank.identity.security.PolicyEnforcementFilter;
 import com.anybank.identity.security.RiskEvaluationFilter;
 import com.anybank.identity.security.TenantContextFilter;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.web.SecurityFilterChain;
@@ -21,15 +27,21 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import java.util.Arrays;
 import java.util.List;
 
+@Slf4j
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
 @RequiredArgsConstructor
 public class SecurityConfig {
 
+    private final CorrelationIdFilter correlationIdFilter;
     private final TenantContextFilter tenantContextFilter;
     private final RiskEvaluationFilter riskEvaluationFilter;
     private final PolicyEnforcementFilter policyEnforcementFilter;
+    private final AuditLoggingFilter auditLoggingFilter;
+
+    @Value("${spring.security.oauth2.resourceserver.jwt.jwk-set-uri}")
+    private String jwkSetUri;
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
@@ -41,15 +53,21 @@ public class SecurityConfig {
             .authorizeHttpRequests(authz -> authz
                 .requestMatchers("/actuator/**").permitAll()
                 .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
+                .requestMatchers("/debug/**").permitAll()
                 .requestMatchers("/error").permitAll()
                 .anyRequest().authenticated()
             )
             .oauth2ResourceServer(oauth2 -> oauth2
-                .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter()))
+                .jwt(jwt -> jwt
+                    .decoder(jwtDecoder())
+                    .jwtAuthenticationConverter(jwtAuthenticationConverter()))
             )
-            .addFilterAfter(tenantContextFilter, UsernamePasswordAuthenticationFilter.class)
+            .addFilterBefore(correlationIdFilter, UsernamePasswordAuthenticationFilter.class)
+            // TenantContextFilter must run AFTER BearerTokenAuthenticationFilter so JWT is processed
+            .addFilterAfter(tenantContextFilter, org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter.class)
             .addFilterAfter(riskEvaluationFilter, TenantContextFilter.class)
-            .addFilterAfter(policyEnforcementFilter, RiskEvaluationFilter.class);
+            .addFilterAfter(policyEnforcementFilter, RiskEvaluationFilter.class)
+            .addFilterAfter(auditLoggingFilter, PolicyEnforcementFilter.class);
 
         return http.build();
     }
@@ -66,6 +84,15 @@ public class SecurityConfig {
     }
 
     @Bean
+    public JwtDecoder jwtDecoder() {
+        // Use explicit JWK URI to avoid issuer-based URL derivation
+        // This is necessary because tokens are issued with localhost:8080 issuer
+        // but the backend must fetch JWKs from keycloak:8080 within Docker network
+        log.info("Creating JwtDecoder with JWK Set URI: {}", jwkSetUri);
+        return NimbusJwtDecoder.withJwkSetUri(jwkSetUri).build();
+    }
+
+    @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
         configuration.setAllowedOrigins(List.of(
@@ -79,9 +106,12 @@ public class SecurityConfig {
                 "Content-Type",
                 "X-Requested-With",
                 "Accept",
-                "Origin"
+                "Origin",
+                "X-Tenant-ID",
+                "X-Correlation-ID",
+                "X-Session-ID"
         ));
-        configuration.setExposedHeaders(List.of("Authorization"));
+        configuration.setExposedHeaders(List.of("Authorization", "X-Correlation-ID"));
         configuration.setAllowCredentials(true);
         configuration.setMaxAge(3600L);
 

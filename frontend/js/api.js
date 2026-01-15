@@ -51,6 +51,12 @@ async function request(method, path, options = {}) {
         headers['Authorization'] = `Bearer ${auth.getIdentityToken()}`;
     }
 
+    // Add tenant context header
+    const currentTenant = state.get('currentTenant');
+    if (currentTenant && currentTenant.id) {
+        headers['X-Tenant-ID'] = currentTenant.id;
+    }
+
     // Build request config
     const config = {
         method,
