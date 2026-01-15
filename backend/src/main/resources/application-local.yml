@@ -1,0 +1,41 @@
+# Local development profile configuration
+# Use with: SPRING_PROFILES_ACTIVE=local
+
+server:
+  port: 8000
+
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/anybank
+    username: bank
+    password: bank
+
+  jpa:
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: http://localhost:8080/realms/anybank
+          jwk-set-uri: http://localhost:8080/realms/anybank/protocol/openid-connect/certs
+
+keycloak:
+  url: http://localhost:8080
+  realm: anybank
+  client-id: anybank-api
+  client-secret: change-me-in-production
+
+opa:
+  url: http://localhost:8181/v1/data/bank/authz
+
+logging:
+  level:
+    root: INFO
+    com.anybank.identity: DEBUG
+    org.springframework.security: DEBUG
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE

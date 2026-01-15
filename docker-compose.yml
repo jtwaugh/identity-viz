@@ -1,0 +1,161 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database - Stores user, tenant, account data
+  postgres:
+    image: postgres:15-alpine
+    container_name: anybank-postgres
+    environment:
+      POSTGRES_DB: anybank
+      POSTGRES_USER: ${POSTGRES_USER:-bank}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bank}
+      POSTGRES_MULTIPLE_DATABASES: keycloak
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./seed/demo-data.sql:/docker-entrypoint-initdb.d/02-demo-data.sql
+      - ./scripts/init-db.sh:/docker-entrypoint-initdb.d/01-init-db.sh
+    ports:
+      - "5432:5432"
+    networks:
+      - bank-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bank} -d anybank"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Keycloak Identity Provider - Handles authentication and token exchange
+  keycloak:
+    image: quay.io/keycloak/keycloak:23.0
+    container_name: anybank-keycloak
+    command:
+      - start-dev
+      - --features=token-exchange
+      - --import-realm
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: ${POSTGRES_USER:-bank}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-bank}
+      KC_HOSTNAME_STRICT: false
+      KC_HTTP_ENABLED: true
+      KC_PROXY: edge
+    volumes:
+      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json
+    ports:
+      - "8080:8080"
+    networks:
+      - bank-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "cat < /dev/null > /dev/tcp/localhost/8080"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+    restart: unless-stopped
+
+  # Open Policy Agent - Fine-grained access control engine
+  opa:
+    image: openpolicyagent/opa:latest
+    container_name: anybank-opa
+    command:
+      - run
+      - --server
+      - --addr=0.0.0.0:8181
+      - --watch
+      - /policies
+      - --log-level=debug
+    volumes:
+      - ./opa:/policies
+    ports:
+      - "8181:8181"
+    networks:
+      - bank-net
+    healthcheck:
+      test: ["CMD", "/opa", "eval", "true"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Spring Boot Backend - Core banking API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: anybank-backend
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-local}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/anybank
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-bank}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-bank}
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_FLYWAY_ENABLED: false
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI: http://keycloak:8080/realms/anybank
+      KEYCLOAK_JWK_URI: http://keycloak:8080/realms/anybank/protocol/openid-connect/certs
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_REALM: anybank
+      KEYCLOAK_CLIENT_ID: anybank-api
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-anybank-api-secret}
+      OPA_URL: http://opa:8181/v1/data/bank/authz
+      LOGGING_LEVEL_ROOT: INFO
+      LOGGING_LEVEL_COM_ANYBANK: DEBUG
+      SERVER_PORT: 8000
+    ports:
+      - "8000:8000"
+    networks:
+      - bank-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      opa:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8000/actuator/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    restart: unless-stopped
+    volumes:
+      - m2-cache:/root/.m2
+
+  # Frontend - Static files served via nginx
+  frontend:
+    image: nginx:alpine
+    container_name: anybank-frontend
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "3000:80"
+    networks:
+      - bank-net
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:80/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+networks:
+  bank-net:
+    driver: bridge
+    name: anybank-network
+
+volumes:
+  postgres-data:
+    name: anybank-postgres-data
+  m2-cache:
+    name: anybank-maven-cache
