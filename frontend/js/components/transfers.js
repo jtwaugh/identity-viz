@@ -39,7 +39,18 @@ let transferData = {
 export async function render() {
     const app = document.getElementById('app');
     const currentTenant = state.get('currentTenant');
-    const accounts = state.get('accounts') || [];
+
+    // Fetch accounts if not already loaded in state
+    let accounts = state.get('accounts') || [];
+    if (accounts.length === 0) {
+        try {
+            const response = await api.getAccounts();
+            accounts = response.accounts || [];
+            state.set('accounts', accounts);
+        } catch (error) {
+            console.warn('Failed to fetch accounts for transfers:', error);
+        }
+    }
 
     // Reset state
     currentStep = 1;
@@ -124,7 +135,7 @@ function renderStep1(accounts, colorClass) {
                     <select id="from-account" class="select">
                         ${accounts.map(acc => `
                             <option value="${acc.id}" ${transferData.fromAccount === acc.id ? 'selected' : ''}>
-                                ${escapeHtml(acc.name)} (${acc.account_number}) - ${formatCurrency(acc.balance)}
+                                ${escapeHtml(acc.name)} (${acc.account_number || acc.accountNumber}) - ${formatCurrency(acc.balance)}
                             </option>
                         `).join('')}
                     </select>
@@ -155,7 +166,7 @@ function renderStep1(accounts, colorClass) {
                     <select id="to-account" class="select">
                         ${accounts.filter(acc => acc.id !== transferData.fromAccount).map(acc => `
                             <option value="${acc.id}" ${transferData.toAccount === acc.id ? 'selected' : ''}>
-                                ${escapeHtml(acc.name)} (${acc.account_number})
+                                ${escapeHtml(acc.name)} (${acc.account_number || acc.accountNumber})
                             </option>
                         `).join('')}
                     </select>
@@ -239,7 +250,7 @@ function renderStep2(accounts, colorClass) {
 
     let toDisplay = '';
     if (transferData.toType === 'internal' && toAccount) {
-        toDisplay = `${toAccount.name} (${toAccount.account_number})`;
+        toDisplay = `${toAccount.name} (${toAccount.account_number || toAccount.accountNumber})`;
     } else if (transferData.toType === 'external') {
         toDisplay = `External Account ****${transferData.externalAccount.slice(-4)}`;
     } else {
@@ -254,7 +265,7 @@ function renderStep2(accounts, colorClass) {
                 <div class="card p-4 bg-gray-50">
                     <div class="flex items-center justify-between py-2">
                         <span class="text-gray-500">From</span>
-                        <span class="font-medium text-gray-900">${escapeHtml(fromAccount?.name)} (${fromAccount?.account_number})</span>
+                        <span class="font-medium text-gray-900">${escapeHtml(fromAccount?.name)} (${fromAccount?.account_number || fromAccount?.accountNumber})</span>
                     </div>
                     <div class="flex items-center justify-between py-2 border-t border-gray-200">
                         <span class="text-gray-500">To</span>

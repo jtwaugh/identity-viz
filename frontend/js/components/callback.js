@@ -84,6 +84,7 @@ export async function render() {
 /**
  * Fetch user data and available tenants from the API
  * With BFF pattern, user info comes from /bff/auth/me (session-based)
+ * Tenants come from /auth/me (backend API with real database UUIDs)
  */
 async function fetchUserData() {
     try {
@@ -103,11 +104,31 @@ async function fetchUserData() {
             state.set('user', user);
             console.log('[Callback] User set in state:', user.email);
 
-            // For now, generate mock tenants since BFF doesn't return tenants yet
-            // TODO: Add /bff/auth/tenants endpoint for real tenant data
-            const mockTenants = generateMockTenants(response.email);
-            state.set('availableTenants', mockTenants);
-            console.log('[Callback] Mock tenants set:', mockTenants.length);
+            // Fetch real tenants from backend /auth/me endpoint
+            // This returns actual database UUIDs needed for API calls
+            let tenants = [];
+            try {
+                const authMeResponse = await fetch('/auth/me', {
+                    credentials: 'include',
+                    headers: { 'Accept': 'application/json' }
+                });
+                if (authMeResponse.ok) {
+                    const authMeData = await authMeResponse.json();
+                    tenants = authMeData.tenants || [];
+                    console.log('[Callback] Real tenants from /auth/me:', tenants.length);
+                }
+            } catch (tenantError) {
+                console.warn('[Callback] Failed to fetch tenants from /auth/me:', tenantError);
+            }
+
+            // Fall back to mock tenants if real ones aren't available
+            if (tenants.length === 0) {
+                console.log('[Callback] No real tenants, using mock tenants');
+                tenants = generateMockTenants(response.email);
+            }
+
+            state.set('availableTenants', tenants);
+            console.log('[Callback] Tenants set:', tenants.length);
         }
 
         state.persist();

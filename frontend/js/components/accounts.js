@@ -185,7 +185,7 @@ export async function renderDetails(context) {
                         </div>
                         <div>
                             <h1 class="text-xl font-bold text-gray-900">${escapeHtml(account.name)}</h1>
-                            <p class="text-gray-500">${account.account_number}</p>
+                            <p class="text-gray-500">${account.account_number || account.accountNumber}</p>
                             <span class="badge badge-${colorClass === 'purple' ? 'commercial' : 'consumer'} mt-2">${typeInfo.label}</span>
                         </div>
                     </div>
@@ -271,7 +271,7 @@ export async function renderDetails(context) {
                                 </div>
                                 <div class="flex justify-between">
                                     <dt class="text-gray-500">Account Number</dt>
-                                    <dd class="font-medium text-gray-900">${account.account_number}</dd>
+                                    <dd class="font-medium text-gray-900">${account.account_number || account.accountNumber}</dd>
                                 </div>
                                 <div class="flex justify-between">
                                     <dt class="text-gray-500">Status</dt>
@@ -369,7 +369,7 @@ function renderAccountCard(account, colorClass) {
                 </div>
                 <div class="flex-1 min-w-0">
                     <h3 class="font-semibold text-gray-900 truncate">${escapeHtml(account.name)}</h3>
-                    <p class="text-sm text-gray-500">${account.account_number}</p>
+                    <p class="text-sm text-gray-500">${account.account_number || account.accountNumber}</p>
                 </div>
             </div>
             <div class="flex items-end justify-between">

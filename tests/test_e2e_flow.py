@@ -419,6 +419,8 @@ class BffAuthTest:
             ("BFF Full Login Flow", self.test_full_login_flow),
             ("BFF /me after login returns user", self.test_me_authenticated),
             ("BFF tenant selection flow", self.test_tenant_selection_flow),
+            ("BFF business transfer options", self.test_business_transfer_options),
+            ("BFF tenant swap no 403", self.test_tenant_swap_no_403),
             ("BFF /logout with session", self.test_logout_with_session),
             ("No repeated /me calls (loop detection)", self.test_no_repeated_me_calls),
         ]
@@ -771,6 +773,421 @@ class BffAuthTest:
                 "session_valid_after": True,
                 "accounts_status": api_response.status_code,
                 "admin_status": admin_response.status_code
+            }
+        )
+
+    def test_business_transfer_options(self) -> TestResult:
+        """
+        Test that logs in, goes to the business page, and verifies transfer options populate.
+
+        This test simulates:
+        1. Logging in with valid credentials
+        2. Selecting a business tenant
+        3. Fetching accounts that would be used for transfers
+        4. Confirming accounts are returned and can be used for transfer options
+        """
+        # Use the existing session from previous tests (should be logged in with business tenant)
+        me_url = f"{BACKEND_URL}/bff/auth/me"
+        me_response = self.session.get(me_url, timeout=10)
+
+        if me_response.status_code != 200:
+            # Need to re-login
+            print("  Re-authenticating for business transfer test...")
+            login_url = f"{BACKEND_URL}/bff/auth/login"
+            response = self.session.get(login_url, allow_redirects=True, timeout=10)
+
+            if response.status_code != 200:
+                return TestResult(
+                    "Business Transfer Options",
+                    False,
+                    "Could not reach Keycloak login page",
+                    {"status": response.status_code}
+                )
+
+            # Submit login form
+            action_match = re.search(r'action="([^"]+)"', response.text)
+            if action_match:
+                action_url = action_match.group(1).replace("&amp;", "&")
+                login_data = {"username": TEST_USER_EMAIL, "password": TEST_USER_PASSWORD}
+                self.session.post(action_url, data=login_data, allow_redirects=True, timeout=10)
+
+            # Re-fetch user info after login
+            me_response = self.session.get(me_url, timeout=10)
+
+        print("  Step 1: Verified session, fetching user tenants...")
+
+        # Get user's tenants from /auth/me endpoint to find the business tenant
+        auth_me_url = f"{BACKEND_URL}/auth/me"
+
+        # We need to get tenants - try the BFF endpoint first which has user info
+        # but we need tenant list from the backend /auth/me
+        try:
+            # Get an access token via direct grant for the /auth/me call
+            token_url = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/token"
+            token_data = {
+                "grant_type": "password",
+                "client_id": KEYCLOAK_CLIENT_ID,
+                "username": TEST_USER_EMAIL,
+                "password": TEST_USER_PASSWORD,
+                "scope": "openid profile email"
+            }
+            token_response = requests.post(token_url, data=token_data, timeout=10)
+            if token_response.status_code != 200:
+                return TestResult(
+                    "Business Transfer Options",
+                    False,
+                    "Could not get access token for tenant lookup",
+                    {"status": token_response.status_code}
+                )
+
+            access_token = token_response.json().get("access_token")
+            headers = {"Authorization": f"Bearer {access_token}"}
+
+            auth_response = requests.get(auth_me_url, headers=headers, timeout=10)
+            if auth_response.status_code != 200:
+                return TestResult(
+                    "Business Transfer Options",
+                    False,
+                    f"Could not fetch user tenants: {auth_response.status_code}",
+                    {"body": auth_response.text[:200]}
+                )
+
+            user_data = auth_response.json()
+            tenants = user_data.get("tenants", [])
+
+        except Exception as e:
+            return TestResult(
+                "Business Transfer Options",
+                False,
+                f"Error fetching tenants: {str(e)}",
+                {}
+            )
+
+        # Find a business/commercial tenant
+        business_tenant = None
+        for tenant in tenants:
+            tenant_type = tenant.get("type", "")
+            tenant_name = tenant.get("name", "")
+            print(f"  Found tenant: {tenant_name} (type: {tenant_type}, id: {tenant.get('id')})")
+            if tenant_type == "COMMERCIAL" or "business" in tenant_name.lower():
+                business_tenant = tenant
+                break
+
+        if not business_tenant:
+            return TestResult(
+                "Business Transfer Options",
+                False,
+                "No business/commercial tenant found for user",
+                {"tenants": tenants}
+            )
+
+        tenant_id = business_tenant.get("id")
+        print(f"  Step 2: Selecting business tenant: {business_tenant.get('name')} (ID: {tenant_id})")
+
+        # Step 2: Select business tenant using its actual UUID
+        exchange_url = f"{BACKEND_URL}/bff/auth/token/exchange"
+
+        exchange_response = self.session.post(
+            exchange_url,
+            json={"target_tenant_id": tenant_id},
+            timeout=10
+        )
+
+        if exchange_response.status_code != 200:
+            return TestResult(
+                "Business Transfer Options",
+                False,
+                f"Failed to select business tenant: {exchange_response.status_code}",
+                {"status": exchange_response.status_code, "body": exchange_response.text[:200]}
+            )
+
+        print(f"  Step 2: Selected business tenant: {tenant_id}")
+
+        # Step 3: Fetch accounts for the business tenant
+        accounts_url = f"{BACKEND_URL}/api/accounts"
+        accounts_response = self.session.get(accounts_url, timeout=10)
+
+        print(f"  Step 3: Fetched accounts, status: {accounts_response.status_code}")
+
+        if accounts_response.status_code != 200:
+            return TestResult(
+                "Business Transfer Options",
+                False,
+                f"Failed to fetch accounts: {accounts_response.status_code}",
+                {
+                    "status": accounts_response.status_code,
+                    "body": accounts_response.text[:200]
+                }
+            )
+
+        # Step 4: Verify accounts data
+        try:
+            accounts_data = accounts_response.json()
+        except json.JSONDecodeError:
+            return TestResult(
+                "Business Transfer Options",
+                False,
+                "Accounts response is not valid JSON",
+                {"body": accounts_response.text[:200]}
+            )
+
+        # Handle both array and object with 'accounts' key
+        accounts = accounts_data
+        if isinstance(accounts_data, dict):
+            accounts = accounts_data.get("accounts", accounts_data.get("content", []))
+
+        if not isinstance(accounts, list):
+            return TestResult(
+                "Business Transfer Options",
+                False,
+                "Accounts response is not a list",
+                {"accounts_data": accounts_data}
+            )
+
+        print(f"  Step 4: Found {len(accounts)} account(s)")
+
+        if len(accounts) == 0:
+            return TestResult(
+                "Business Transfer Options",
+                False,
+                "No accounts found for business tenant - transfer options would be empty",
+                {"tenant_id": tenant_id}
+            )
+
+        # Verify accounts have required fields for transfer options
+        valid_accounts = []
+        for acc in accounts:
+            if acc.get("id") and (acc.get("name") or acc.get("account_number")):
+                valid_accounts.append({
+                    "id": acc.get("id"),
+                    "name": acc.get("name"),
+                    "account_number": acc.get("account_number"),
+                    "balance": acc.get("balance"),
+                    "type": acc.get("type") or acc.get("account_type")
+                })
+
+        if len(valid_accounts) < 2:
+            return TestResult(
+                "Business Transfer Options",
+                False,
+                f"Need at least 2 accounts for transfers, found {len(valid_accounts)}",
+                {"accounts": valid_accounts}
+            )
+
+        return TestResult(
+            "Business Transfer Options",
+            True,
+            f"Business tenant has {len(valid_accounts)} account(s) available for transfers",
+            {
+                "tenant_id": tenant_id,
+                "account_count": len(valid_accounts),
+                "accounts": valid_accounts[:5]  # Show first 5
+            }
+        )
+
+    def test_tenant_swap_no_403(self) -> TestResult:
+        """
+        Test that swapping tenants doesn't result in 403 when loading accounts.
+
+        This test simulates:
+        1. Login and get available tenants
+        2. Select first tenant (personal)
+        3. Fetch accounts for first tenant
+        4. Swap to second tenant (business)
+        5. Fetch accounts for second tenant - should NOT get 403
+        """
+        # Step 1: Get a fresh token and fetch tenants
+        print("  Step 1: Getting access token and fetching tenants...")
+        token_url = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/token"
+        token_data = {
+            "grant_type": "password",
+            "client_id": KEYCLOAK_CLIENT_ID,
+            "username": TEST_USER_EMAIL,
+            "password": TEST_USER_PASSWORD,
+            "scope": "openid profile email"
+        }
+        token_response = requests.post(token_url, data=token_data, timeout=10)
+        if token_response.status_code != 200:
+            return TestResult(
+                "Tenant Swap No 403",
+                False,
+                "Could not get access token",
+                {"status": token_response.status_code}
+            )
+
+        access_token = token_response.json().get("access_token")
+        headers = {"Authorization": f"Bearer {access_token}"}
+
+        # Get tenants from /auth/me
+        auth_me_url = f"{BACKEND_URL}/auth/me"
+        auth_response = requests.get(auth_me_url, headers=headers, timeout=10)
+        if auth_response.status_code != 200:
+            return TestResult(
+                "Tenant Swap No 403",
+                False,
+                f"Could not fetch tenants: {auth_response.status_code}",
+                {}
+            )
+
+        tenants = auth_response.json().get("tenants", [])
+        if len(tenants) < 2:
+            return TestResult(
+                "Tenant Swap No 403",
+                False,
+                f"Need at least 2 tenants for swap test, found {len(tenants)}",
+                {"tenants": tenants}
+            )
+
+        print(f"  Found {len(tenants)} tenants")
+        for t in tenants:
+            print(f"    - {t.get('name')} ({t.get('type')}, id: {t.get('id')})")
+
+        # Step 2: Login via BFF and select first tenant
+        print("  Step 2: Logging in via BFF...")
+        fresh_session = requests.Session()
+        login_url = f"{BACKEND_URL}/bff/auth/login"
+        response = fresh_session.get(login_url, allow_redirects=True, timeout=10)
+
+        if response.status_code != 200:
+            return TestResult(
+                "Tenant Swap No 403",
+                False,
+                "Could not reach Keycloak login page",
+                {"status": response.status_code}
+            )
+
+        # Submit login form
+        action_match = re.search(r'action="([^"]+)"', response.text)
+        if action_match:
+            action_url = action_match.group(1).replace("&amp;", "&")
+            login_data = {"username": TEST_USER_EMAIL, "password": TEST_USER_PASSWORD}
+            fresh_session.post(action_url, data=login_data, allow_redirects=True, timeout=10)
+
+        # Step 3: Select first tenant (CONSUMER/personal)
+        first_tenant = tenants[0]
+        print(f"  Step 3: Selecting first tenant: {first_tenant.get('name')} (ID: {first_tenant.get('id')})")
+
+        exchange_url = f"{BACKEND_URL}/bff/auth/token/exchange"
+        exchange_response = fresh_session.post(
+            exchange_url,
+            json={"target_tenant_id": first_tenant.get("id")},
+            timeout=10
+        )
+
+        if exchange_response.status_code != 200:
+            return TestResult(
+                "Tenant Swap No 403",
+                False,
+                f"Failed to select first tenant: {exchange_response.status_code}",
+                {"body": exchange_response.text[:200]}
+            )
+
+        # Step 4: Fetch accounts for first tenant
+        print("  Step 4: Fetching accounts for first tenant...")
+        accounts_url = f"{BACKEND_URL}/api/accounts"
+        accounts_response = fresh_session.get(accounts_url, timeout=10)
+        print(f"    First tenant accounts status: {accounts_response.status_code}")
+
+        if accounts_response.status_code == 403:
+            return TestResult(
+                "Tenant Swap No 403",
+                False,
+                f"Got 403 on first tenant accounts fetch",
+                {"tenant": first_tenant.get("name")}
+            )
+
+        # Step 5: Swap to second tenant (should be COMMERCIAL/business)
+        second_tenant = tenants[1]
+        print(f"  Step 5: Swapping to second tenant: {second_tenant.get('name')} (ID: {second_tenant.get('id')})")
+
+        exchange_response = fresh_session.post(
+            exchange_url,
+            json={"target_tenant_id": second_tenant.get("id")},
+            timeout=10
+        )
+
+        if exchange_response.status_code != 200:
+            return TestResult(
+                "Tenant Swap No 403",
+                False,
+                f"Failed to swap to second tenant: {exchange_response.status_code}",
+                {"body": exchange_response.text[:200]}
+            )
+
+        # Step 6: Fetch accounts for second tenant - this is where 403 was happening
+        print("  Step 6: Fetching accounts after tenant swap...")
+        accounts_response = fresh_session.get(accounts_url, timeout=10)
+        print(f"    Second tenant accounts status: {accounts_response.status_code}")
+
+        if accounts_response.status_code == 403:
+            return TestResult(
+                "Tenant Swap No 403",
+                False,
+                f"Got 403 on second tenant accounts fetch after swap!",
+                {
+                    "first_tenant": first_tenant.get("name"),
+                    "second_tenant": second_tenant.get("name"),
+                    "response": accounts_response.text[:200]
+                }
+            )
+
+        if accounts_response.status_code != 200:
+            return TestResult(
+                "Tenant Swap No 403",
+                False,
+                f"Unexpected status {accounts_response.status_code} after swap",
+                {"response": accounts_response.text[:200]}
+            )
+
+        # Verify we got accounts
+        try:
+            accounts_data = accounts_response.json()
+            accounts = accounts_data.get("accounts", accounts_data) if isinstance(accounts_data, dict) else accounts_data
+            account_count = len(accounts) if isinstance(accounts, list) else 0
+        except:
+            accounts = []
+            account_count = 0
+
+        print(f"    Got {account_count} accounts for second tenant")
+
+        # Step 7: Try to fetch transactions for an account (this is where the 403 was happening)
+        if account_count > 0:
+            account_id = accounts[0].get("id")
+            print(f"  Step 7: Fetching transactions for account {account_id}...")
+            transactions_url = f"{BACKEND_URL}/api/accounts/{account_id}/transactions"
+            transactions_response = fresh_session.get(transactions_url, timeout=10)
+            print(f"    Transactions status: {transactions_response.status_code}")
+
+            if transactions_response.status_code == 403:
+                return TestResult(
+                    "Tenant Swap No 403",
+                    False,
+                    f"Got 403 on transactions fetch after tenant swap!",
+                    {
+                        "first_tenant": first_tenant.get("name"),
+                        "second_tenant": second_tenant.get("name"),
+                        "account_id": account_id,
+                        "response": transactions_response.text[:200]
+                    }
+                )
+
+            # 200 or 404 (no transactions) is fine
+            if transactions_response.status_code not in [200, 404]:
+                return TestResult(
+                    "Tenant Swap No 403",
+                    False,
+                    f"Unexpected status {transactions_response.status_code} on transactions",
+                    {"response": transactions_response.text[:200]}
+                )
+
+        return TestResult(
+            "Tenant Swap No 403",
+            True,
+            f"Tenant swap successful, fetched {account_count} accounts and transactions without 403",
+            {
+                "first_tenant": first_tenant.get("name"),
+                "second_tenant": second_tenant.get("name"),
+                "account_count": account_count
             }
         )
 

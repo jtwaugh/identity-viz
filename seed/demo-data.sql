@@ -97,7 +97,8 @@ ON CONFLICT (email) DO NOTHING;
 INSERT INTO tenants (id, external_id, name, type, status, metadata, created_at) VALUES
     ('10000000-0000-0000-0000-000000000001', 'tenant-personal-jdoe', 'John Doe', 'CONSUMER', 'ACTIVE', '{"description": "Personal banking account for John Doe"}', NOW()),
     ('10000000-0000-0000-0000-000000000002', 'tenant-personal-jsmith', 'Jane Smith', 'CONSUMER', 'ACTIVE', '{"description": "Personal banking account for Jane Smith"}', NOW()),
-    ('10000000-0000-0000-0000-000000000003', 'tenant-business-anybiz', 'AnyBusiness Inc.', 'COMMERCIAL', 'ACTIVE', '{"description": "Commercial banking account for AnyBusiness Inc.", "ein": "12-3456789"}', NOW())
+    ('10000000-0000-0000-0000-000000000003', 'tenant-business-anybiz', 'AnyBusiness Inc.', 'COMMERCIAL', 'ACTIVE', '{"description": "Commercial banking account for AnyBusiness Inc.", "ein": "12-3456789"}', NOW()),
+    ('10000000-0000-0000-0000-000000000004', 'tenant-business-doeventures', 'Doe Ventures LLC', 'SMALL_BUSINESS', 'ACTIVE', '{"description": "Small business account for Doe Ventures LLC", "ein": "98-7654321"}', NOW())
 ON CONFLICT (external_id) DO NOTHING;
 
 -- Insert Demo Memberships
@@ -105,12 +106,14 @@ INSERT INTO memberships (id, user_id, tenant_id, role, status, accepted_at, crea
     -- John Doe memberships
     (uuid_generate_v4(), '00000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'OWNER', 'ACTIVE', NOW(), NOW()),
     (uuid_generate_v4(), '00000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000003', 'OWNER', 'ACTIVE', NOW(), NOW()),
+    (uuid_generate_v4(), '00000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000004', 'OWNER', 'ACTIVE', NOW(), NOW()),
     -- Jane Smith membership
     (uuid_generate_v4(), '00000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002', 'OWNER', 'ACTIVE', NOW(), NOW()),
     -- Admin User memberships (has ADMIN role in all tenants)
     (uuid_generate_v4(), '00000000-0000-0000-0000-000000000003', '10000000-0000-0000-0000-000000000001', 'ADMIN', 'ACTIVE', NOW(), NOW()),
     (uuid_generate_v4(), '00000000-0000-0000-0000-000000000003', '10000000-0000-0000-0000-000000000002', 'ADMIN', 'ACTIVE', NOW(), NOW()),
-    (uuid_generate_v4(), '00000000-0000-0000-0000-000000000003', '10000000-0000-0000-0000-000000000003', 'ADMIN', 'ACTIVE', NOW(), NOW())
+    (uuid_generate_v4(), '00000000-0000-0000-0000-000000000003', '10000000-0000-0000-0000-000000000003', 'ADMIN', 'ACTIVE', NOW(), NOW()),
+    (uuid_generate_v4(), '00000000-0000-0000-0000-000000000003', '10000000-0000-0000-0000-000000000004', 'ADMIN', 'ACTIVE', NOW(), NOW())
 ON CONFLICT (user_id, tenant_id) DO NOTHING;
 
 -- Insert Demo Accounts
@@ -123,7 +126,10 @@ INSERT INTO accounts (id, tenant_id, account_number, account_type, name, balance
     -- AnyBusiness Inc. Commercial Accounts
     (uuid_generate_v4(), '10000000-0000-0000-0000-000000000003', '****4521', 'CHECKING', 'Business Operating', 5400000.00, 'USD', 'ACTIVE', NOW()),
     (uuid_generate_v4(), '10000000-0000-0000-0000-000000000003', '****7832', 'CHECKING', 'Payroll', 234500.00, 'USD', 'ACTIVE', NOW()),
-    (uuid_generate_v4(), '10000000-0000-0000-0000-000000000003', '****1199', 'MONEY_MARKET', 'Business Reserve', 1250000.00, 'USD', 'ACTIVE', NOW())
+    (uuid_generate_v4(), '10000000-0000-0000-0000-000000000003', '****1199', 'MONEY_MARKET', 'Business Reserve', 1250000.00, 'USD', 'ACTIVE', NOW()),
+    -- Doe Ventures LLC Small Business Accounts
+    (uuid_generate_v4(), '10000000-0000-0000-0000-000000000004', '****2468', 'CHECKING', 'Operating Account', 87500.00, 'USD', 'ACTIVE', NOW()),
+    (uuid_generate_v4(), '10000000-0000-0000-0000-000000000004', '****1357', 'SAVINGS', 'Business Savings', 42000.00, 'USD', 'ACTIVE', NOW())
 ON CONFLICT (account_number) DO NOTHING;
 
 -- Insert sample audit log entries (for demonstration)

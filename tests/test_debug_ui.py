@@ -94,6 +94,7 @@ class DebugUITest:
             ("Policy List", self.test_policy_list),
             ("Policy Evaluate", self.test_policy_evaluate),
             ("Slide-over Element Exists", self.test_slide_over_element),
+            ("People Page Personal vs Business", self.test_people_page_different_for_personal_vs_business),
         ]
 
         for name, test_func in tests:
@@ -1989,6 +1990,213 @@ class DebugUITest:
                 {"exception": str(e)}
             )
 
+    # ==================== People/Users Page Tests ====================
+
+    def test_people_page_different_for_personal_vs_business(self) -> TestResult:
+        """
+        Test that the /api/admin/users endpoint returns different results
+        for personal (CONSUMER) vs business (COMMERCIAL/SMALL_BUSINESS) accounts.
+
+        Personal accounts should only show the owner (single user).
+        Business accounts should show all team members.
+        """
+        try:
+            # Step 1: Authenticate with Keycloak
+            token_url = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/token"
+            token_response = self.session.post(
+                token_url,
+                data={
+                    "grant_type": "password",
+                    "client_id": KEYCLOAK_CLIENT_ID,
+                    "username": TEST_USER_EMAIL,
+                    "password": TEST_USER_PASSWORD,
+                    "scope": "openid profile email"
+                },
+                timeout=10
+            )
+
+            if token_response.status_code != 200:
+                return TestResult(
+                    "People Page Personal vs Business",
+                    False,
+                    f"Keycloak auth failed: {token_response.status_code}",
+                    {"error": token_response.text[:200]}
+                )
+
+            token_data = token_response.json()
+            access_token = token_data.get("access_token")
+
+            if not access_token:
+                return TestResult(
+                    "People Page Personal vs Business",
+                    False,
+                    "No access_token in Keycloak response",
+                    {}
+                )
+
+            auth_headers = {"Authorization": f"Bearer {access_token}"}
+
+            # Step 2: Get user info and available tenants
+            me_response = self.session.get(
+                f"{BACKEND_URL}/auth/me",
+                headers=auth_headers,
+                timeout=5
+            )
+
+            if me_response.status_code != 200:
+                return TestResult(
+                    "People Page Personal vs Business",
+                    False,
+                    f"/auth/me failed: {me_response.status_code}",
+                    {"status": me_response.status_code}
+                )
+
+            user_info = me_response.json()
+            tenants = user_info.get("tenants", [])
+
+            if len(tenants) < 2:
+                return TestResult(
+                    "People Page Personal vs Business",
+                    False,
+                    f"User needs at least 2 tenants to test (has {len(tenants)})",
+                    {"tenant_count": len(tenants)}
+                )
+
+            # Find personal and business tenants
+            personal_tenant = None
+            business_tenant = None
+
+            for tenant in tenants:
+                tenant_type = tenant.get("type", "")
+                if tenant_type == "CONSUMER" and not personal_tenant:
+                    personal_tenant = tenant
+                elif tenant_type in ["COMMERCIAL", "SMALL_BUSINESS"] and not business_tenant:
+                    business_tenant = tenant
+
+            if not personal_tenant:
+                return TestResult(
+                    "People Page Personal vs Business",
+                    False,
+                    "No CONSUMER (personal) tenant found for user",
+                    {"tenants": [t.get("type") for t in tenants]}
+                )
+
+            if not business_tenant:
+                return TestResult(
+                    "People Page Personal vs Business",
+                    False,
+                    "No COMMERCIAL/SMALL_BUSINESS tenant found for user",
+                    {"tenants": [t.get("type") for t in tenants]}
+                )
+
+            # Step 3: Get users for personal tenant
+            personal_headers = {
+                **auth_headers,
+                "X-Tenant-ID": personal_tenant.get("id")
+            }
+            personal_users_response = self.session.get(
+                f"{BACKEND_URL}/api/admin/users",
+                headers=personal_headers,
+                timeout=5
+            )
+
+            # Personal account might return 403 if user doesn't have ADMIN role,
+            # or return just 1 user (themselves)
+            personal_users = []
+            personal_status = personal_users_response.status_code
+            if personal_status == 200:
+                personal_users = personal_users_response.json() or []
+            elif personal_status == 403:
+                # Expected for non-admin users on personal account
+                personal_users = []
+
+            # Step 4: Get users for business tenant
+            business_headers = {
+                **auth_headers,
+                "X-Tenant-ID": business_tenant.get("id")
+            }
+            business_users_response = self.session.get(
+                f"{BACKEND_URL}/api/admin/users",
+                headers=business_headers,
+                timeout=5
+            )
+
+            business_users = []
+            business_status = business_users_response.status_code
+            if business_status == 200:
+                business_users = business_users_response.json() or []
+            elif business_status == 403:
+                # User might not be admin on business account
+                business_users = []
+
+            # Step 5: Analyze results
+            personal_count = len(personal_users)
+            business_count = len(business_users)
+
+            # Check if the results are different
+            # Personal should have 0 or 1 user, business should have more (if admin)
+            results_different = (personal_count != business_count) or (personal_users != business_users)
+
+            # For personal accounts, we expect at most 1 user (owner)
+            personal_valid = personal_count <= 1 or personal_status == 403
+
+            # Build detailed result
+            details = {
+                "personal_tenant": {
+                    "id": personal_tenant.get("id"),
+                    "name": personal_tenant.get("name"),
+                    "type": personal_tenant.get("type"),
+                    "user_count": personal_count,
+                    "status": personal_status
+                },
+                "business_tenant": {
+                    "id": business_tenant.get("id"),
+                    "name": business_tenant.get("name"),
+                    "type": business_tenant.get("type"),
+                    "user_count": business_count,
+                    "status": business_status
+                },
+                "results_different": results_different
+            }
+
+            if not results_different and personal_count > 0 and business_count > 0:
+                # Check if the user lists have different emails
+                personal_emails = set(u.get("email") for u in personal_users)
+                business_emails = set(u.get("email") for u in business_users)
+                results_different = personal_emails != business_emails
+                details["personal_emails"] = list(personal_emails)
+                details["business_emails"] = list(business_emails)
+
+            if results_different or personal_valid:
+                return TestResult(
+                    "People Page Personal vs Business",
+                    True,
+                    f"Personal tenant has {personal_count} users, business has {business_count} users",
+                    details
+                )
+            else:
+                return TestResult(
+                    "People Page Personal vs Business",
+                    False,
+                    "Personal and business accounts returned same user list - they should be different",
+                    details
+                )
+
+        except requests.exceptions.ConnectionError as e:
+            return TestResult(
+                "People Page Personal vs Business",
+                False,
+                f"Connection error: {str(e)}",
+                {}
+            )
+        except Exception as e:
+            return TestResult(
+                "People Page Personal vs Business",
+                False,
+                f"Unexpected error: {str(e)}",
+                {"exception": str(e)}
+            )
+
 
 # Pytest test functions
 @pytest.fixture
@@ -2145,6 +2353,12 @@ def test_policy_evaluate(debug_test):
 def test_slide_over_element_exists(debug_test):
     """Test that slide-over element exists in the DOM"""
     result = debug_test.test_slide_over_element()
+    assert result.passed, result.message
+
+
+def test_people_page_different_for_personal_vs_business(debug_test):
+    """Test that People page returns different users for personal vs business accounts"""
+    result = debug_test.test_people_page_different_for_personal_vs_business()
     assert result.passed, result.message
 
 

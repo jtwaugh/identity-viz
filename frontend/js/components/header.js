@@ -301,10 +301,13 @@ async function handleTenantSwitch(tenantId) {
             role: tenant.role
         });
 
+        // Clear cached accounts since we switched tenants
+        state.set('accounts', []);
+
         hideLoading();
 
-        // Refresh current page
-        router.handleRouteChange();
+        // Navigate to dashboard after tenant switch (don't stay on old tenant's pages)
+        router.navigate('/dashboard', { replace: true });
     } catch (error) {
         console.warn('Token exchange failed:', error);
 
@@ -317,8 +320,11 @@ async function handleTenantSwitch(tenantId) {
         });
         auth.setAccessToken(auth.getIdentityToken(), 3600);
 
+        // Clear cached accounts since we switched tenants
+        state.set('accounts', []);
+
         hideLoading();
-        router.handleRouteChange();
+        router.navigate('/dashboard', { replace: true });
     }
 }
 

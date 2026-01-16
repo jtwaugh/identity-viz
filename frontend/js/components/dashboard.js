@@ -79,6 +79,13 @@ export async function render() {
         const response = await api.getAccounts();
         accounts = response.accounts || [];
     } catch (error) {
+        // Handle 401 Unauthorized - log out the user
+        if (error.status === 401) {
+            console.error('[Dashboard] 401 Unauthorized when loading dashboard - logging out user');
+            showToast('Your session has expired. Please sign in again.', 'warning');
+            auth.logout();
+            return;
+        }
         console.warn('Failed to fetch accounts, using mock data:', error);
         accounts = MOCK_ACCOUNTS[currentTenant.id] || [];
     }
@@ -93,6 +100,13 @@ export async function render() {
         try {
             teamMembers = await api.getUsers();
         } catch (error) {
+            // Handle 401 Unauthorized - log out the user
+            if (error.status === 401) {
+                console.error('[Dashboard] 401 Unauthorized when fetching team members - logging out user');
+                showToast('Your session has expired. Please sign in again.', 'warning');
+                auth.logout();
+                return;
+            }
             console.warn('Failed to fetch team members, using mock data:', error);
         }
     }
@@ -170,9 +184,9 @@ function renderConsumerDashboard(user, tenant, accounts) {
                     <div class="space-y-4">
                         ${renderRecentActivity()}
                     </div>
-                    <a href="#/accounts" class="btn btn-ghost w-full mt-4">
+                    <button class="btn btn-ghost w-full mt-4 demo-placeholder" data-feature="View All Transactions">
                         View All Transactions
-                    </a>
+                    </button>
                 </div>
             </div>
         </div>
@@ -285,7 +299,7 @@ function renderAccountCard(account, variant = 'consumer') {
                     </div>
                     <div>
                         <h3 class="font-medium text-gray-900">${escapeHtml(account.name)}</h3>
-                        <p class="text-sm text-gray-500">${account.account_number}</p>
+                        <p class="text-sm text-gray-500">${account.account_number || account.accountNumber}</p>
                     </div>
                 </div>
                 <div class="text-right">
