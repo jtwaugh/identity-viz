@@ -105,7 +105,7 @@ public class DebugController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    @GetMapping("/sessions/{id}/timeline")
+    @GetMapping({"/sessions/{id}/timeline", "/workflows/sessions/{id}/timeline"})
     @Operation(summary = "Get chronological event list for a session")
     public ResponseEntity<Map<String, Object>> getSessionTimeline(@PathVariable String id) {
         return debugSessionService.getSessionById(id)
@@ -243,6 +243,174 @@ public class DebugController {
         response.put("count", decisions.size());
 
         return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/policy/policies")
+    @Operation(summary = "List loaded OPA policies")
+    public ResponseEntity<Map<String, Object>> getPolicies() {
+        // Return sample policies for the debug UI
+        List<Map<String, Object>> policies = List.of(
+            Map.of(
+                "id", "authz",
+                "name", "Authorization Policy",
+                "package", "anybank.authz",
+                "raw", """
+                    package anybank.authz
+
+                    import future.keywords.if
+                    import future.keywords.in
+
+                    default allow := false
+
+                    # Allow if user has required role for the action
+                    allow if {
+                        required_role := action_roles[input.action]
+                        required_role in input.user.roles
+                    }
+
+                    # Allow admins to do anything
+                    allow if {
+                        "admin" in input.user.roles
+                    }
+
+                    # Action to role mapping
+                    action_roles := {
+                        "view_balance": "viewer",
+                        "view_transactions": "viewer",
+                        "internal_transfer": "operator",
+                        "external_transfer": "manager",
+                        "wire_transfer": "admin"
+                    }
+                    """
+            ),
+            Map.of(
+                "id", "risk",
+                "name", "Risk Assessment Policy",
+                "package", "anybank.risk",
+                "raw", """
+                    package anybank.risk
+
+                    import future.keywords.if
+
+                    default risk_score := 0
+
+                    # Calculate risk score based on factors
+                    risk_score := score if {
+                        score := sum([
+                            new_device_score,
+                            unusual_location_score,
+                            off_hours_score,
+                            velocity_score
+                        ])
+                    }
+
+                    new_device_score := 30 if input.device.is_new
+                    new_device_score := 0 if not input.device.is_new
+
+                    unusual_location_score := 25 if input.location.is_unusual
+                    unusual_location_score := 0 if not input.location.is_unusual
+
+                    off_hours_score := 15 if input.time.is_off_hours
+                    off_hours_score := 0 if not input.time.is_off_hours
+
+                    velocity_score := 20 if input.velocity.is_high
+                    velocity_score := 0 if not input.velocity.is_high
+
+                    # Action thresholds
+                    action_allowed if {
+                        threshold := action_thresholds[input.action]
+                        risk_score < threshold
+                    }
+
+                    action_thresholds := {
+                        "view_balance": 80,
+                        "view_transactions": 70,
+                        "internal_transfer": 50,
+                        "external_transfer": 30,
+                        "wire_transfer": 10
+                    }
+                    """
+            ),
+            Map.of(
+                "id", "tenant",
+                "name", "Tenant Access Policy",
+                "package", "anybank.tenant",
+                "raw", """
+                    package anybank.tenant
+
+                    import future.keywords.if
+                    import future.keywords.in
+
+                    default allow := false
+
+                    # Allow access if user is a member of the tenant
+                    allow if {
+                        input.tenant.id in input.user.tenant_memberships
+                    }
+
+                    # Allow access if user has global admin role
+                    allow if {
+                        "global_admin" in input.user.roles
+                    }
+                    """
+            )
+        );
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("policies", policies);
+        response.put("count", policies.size());
+
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/policy/evaluate")
+    @Operation(summary = "Evaluate a policy with given input")
+    public ResponseEntity<Map<String, Object>> evaluatePolicy(@RequestBody Map<String, Object> input) {
+        // Simulate policy evaluation for demo purposes
+        Map<String, Object> result = new HashMap<>();
+
+        // Check if action is provided
+        String action = (String) input.get("action");
+        if (action == null) {
+            result.put("allow", false);
+            result.put("reason", "No action specified");
+            return ResponseEntity.ok(Map.of("result", result));
+        }
+
+        // Simple mock evaluation based on action
+        boolean allowed = switch (action) {
+            case "view_balance", "view_transactions" -> true;
+            case "internal_transfer" -> true;
+            case "external_transfer" -> {
+                // Check if user has manager role
+                @SuppressWarnings("unchecked")
+                Map<String, Object> user = (Map<String, Object>) input.get("user");
+                if (user != null) {
+                    @SuppressWarnings("unchecked")
+                    List<String> roles = (List<String>) user.get("roles");
+                    yield roles != null && (roles.contains("manager") || roles.contains("admin"));
+                }
+                yield false;
+            }
+            case "wire_transfer" -> {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> user = (Map<String, Object>) input.get("user");
+                if (user != null) {
+                    @SuppressWarnings("unchecked")
+                    List<String> roles = (List<String>) user.get("roles");
+                    yield roles != null && roles.contains("admin");
+                }
+                yield false;
+            }
+            default -> false;
+        };
+
+        result.put("allow", allowed);
+        if (!allowed) {
+            result.put("reason", "Insufficient permissions for action: " + action);
+        }
+
+        return ResponseEntity.ok(Map.of("result", result));
     }
 
     // ==================== Data Endpoints ====================

@@ -174,10 +174,11 @@ const state = {
 
     /**
      * Check if user is authenticated
+     * BFF pattern: we check for user object, not tokens (tokens are server-side)
      * @returns {boolean}
      */
     isAuthenticated() {
-        return !!(this._state.tokens.identity || this._state.tokens.access);
+        return !!this._state.user;
     },
 
     /**

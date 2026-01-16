@@ -157,13 +157,33 @@ class SSEClient {
     }
 
     /**
-     * Handle API events
+     * Handle API events - transforms backend events into Request Log format
      */
     handleApiEvent(data) {
+        // Handle legacy format with nested request object
         if (data.request) {
             debugState.addRequest({
                 ...data.request,
                 timestamp: data.timestamp
+            });
+            return;
+        }
+
+        // Handle new action lineage format (response_sent events contain full request info)
+        if (data.action === 'response_sent' && data.details) {
+            const details = data.details;
+            debugState.addRequest({
+                id: data.id || `req_${Date.now()}`,
+                url: details.path,
+                method: details.method,
+                status: details.statusCode,
+                duration: details.duration,
+                timestamp: data.timestamp,
+                requestHeaders: details.headers || {},
+                responseHeaders: details.headers || {},
+                direction: details.direction,
+                from: details.from,
+                to: details.to
             });
         }
     }

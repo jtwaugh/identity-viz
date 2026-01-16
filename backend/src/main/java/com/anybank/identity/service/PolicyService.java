@@ -156,6 +156,9 @@ public class PolicyService {
     private void emitOpaRequestEvent(PolicyInput input) {
         try {
             Map<String, Object> details = new HashMap<>();
+            details.put("direction", "outbound");
+            details.put("from", "backend");
+            details.put("to", "opa");
             details.put("action", input.action());
             details.put("opaUrl", opaUrl);
 
@@ -209,6 +212,9 @@ public class PolicyService {
     private void emitOpaResponseEvent(PolicyInput input, boolean allowed, Map<String, Object> response, long duration, String error) {
         try {
             Map<String, Object> details = new HashMap<>();
+            details.put("direction", "inbound");
+            details.put("from", "opa");
+            details.put("to", "backend");
             details.put("action", input.action());
             details.put("allowed", allowed);
             details.put("duration", duration);

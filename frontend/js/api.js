@@ -6,7 +6,8 @@
 import state from './state.js';
 import auth from './auth.js';
 
-const API_BASE_URL = 'http://localhost:8000';
+// Use relative URLs so requests go through nginx (same origin = cookies work)
+const API_BASE_URL = '';
 
 // Callbacks for handling specific responses
 let onUnauthorizedCallback = null;
@@ -42,8 +43,9 @@ async function request(method, path, options = {}) {
         ...customHeaders
     };
 
-    // Add authorization header
+    // Add authorization header (BFF pattern: tokens are optional, session cookies are primary)
     const token = useIdentityToken ? auth.getIdentityToken() : auth.getAccessToken();
+    const hasToken = !!token || !!auth.getIdentityToken();
     if (token) {
         headers['Authorization'] = `Bearer ${token}`;
     } else if (auth.getIdentityToken()) {
@@ -61,8 +63,11 @@ async function request(method, path, options = {}) {
     const config = {
         method,
         headers,
-        mode: 'cors'
+        mode: 'cors',
+        credentials: 'include'  // Include session cookies for BFF pattern
     };
+
+    console.log(`[API] ${method} ${url}`, { hasToken, hasTenant: !!currentTenant?.id });
 
     if (body && method !== 'GET') {
         config.body = JSON.stringify(body);
@@ -73,7 +78,17 @@ async function request(method, path, options = {}) {
 
         // Handle response
         if (response.status === 401) {
-            if (onUnauthorizedCallback) {
+            // Always log 401s visibly for debugging
+            console.error(`[API] 401 Unauthorized: ${method} ${url}`, {
+                hasToken,
+                hasTenant: !!currentTenant?.id,
+                path: url
+            });
+
+            // Only trigger global logout if we had a token that was rejected
+            // If no token, this is expected and caller should handle it (e.g., use mock data)
+            if (hasToken && onUnauthorizedCallback) {
+                console.error('[API] 401 with valid token - triggering logout');
                 onUnauthorizedCallback();
             }
             throw new ApiError('Unauthorized', 401, { code: 'UNAUTHORIZED' });
@@ -193,20 +208,63 @@ const api = {
     // ============================================
 
     /**
-     * Get current user info and available tenants
+     * Get current user info and available tenants from BFF
+     * Uses session cookies (BFF pattern - no client-side tokens)
      */
     async getMe() {
-        return api.get('/auth/me', null, { useIdentityToken: true });
+        // Use BFF endpoint which uses session cookies, not Bearer tokens
+        const response = await fetch('/bff/auth/me', {
+            method: 'GET',
+            credentials: 'include',
+            headers: {
+                'Accept': 'application/json'
+            }
+        });
+
+        console.log('[API] GET /bff/auth/me response status:', response.status);
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new ApiError(
+                errorData.error || 'Failed to fetch user info',
+                response.status,
+                { code: 'UNAUTHORIZED' }
+            );
+        }
+
+        return response.json();
     },
 
     /**
-     * Exchange identity token for tenant-scoped access token
+     * Exchange for tenant-scoped access token via BFF
+     * Uses session cookies (BFF pattern - no client-side tokens)
      * @param {string} targetTenantId - Target tenant UUID
      */
     async exchangeToken(targetTenantId) {
-        return api.post('/auth/token/exchange', {
-            target_tenant_id: targetTenantId
-        }, { useIdentityToken: true });
+        // Use BFF endpoint with session cookies, not Bearer tokens
+        // This avoids triggering global 401 handler
+        const response = await fetch('/bff/auth/token/exchange', {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            body: JSON.stringify({ target_tenant_id: targetTenantId })
+        });
+
+        console.log('[API] POST /bff/auth/token/exchange response status:', response.status);
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new ApiError(
+                errorData.error || 'Token exchange failed',
+                response.status,
+                { code: 'TOKEN_EXCHANGE_FAILED' }
+            );
+        }
+
+        return response.json();
     },
 
     // ============================================

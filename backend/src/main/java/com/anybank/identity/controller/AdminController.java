@@ -43,8 +43,8 @@ public class AdminController {
         User currentUser = authService.getOrCreateUser(jwt);
         UUID tenantId = getTenantIdFromContext(jwt);
 
-        // Verify admin access
-        MembershipRole role = tenantService.getUserRoleInTenant(currentUser.getId(), tenantId);
+        // Verify admin access - prefer TenantContext role (from session/JWT), fallback to DB
+        MembershipRole role = getRoleFromContextOrDb(currentUser.getId(), tenantId);
         if (!isAdminOrHigher(role)) {
             throw new TenantAccessDeniedException("Insufficient permissions to manage users");
         }
@@ -72,7 +72,7 @@ public class AdminController {
         User currentUser = authService.getOrCreateUser(jwt);
         UUID tenantId = getTenantIdFromContext(jwt);
 
-        MembershipRole role = tenantService.getUserRoleInTenant(currentUser.getId(), tenantId);
+        MembershipRole role = getRoleFromContextOrDb(currentUser.getId(), tenantId);
         if (!isAdminOrHigher(role)) {
             throw new TenantAccessDeniedException("Insufficient permissions to invite users");
         }
@@ -94,7 +94,7 @@ public class AdminController {
         User currentUser = authService.getOrCreateUser(jwt);
         UUID tenantId = getTenantIdFromContext(jwt);
 
-        MembershipRole currentRole = tenantService.getUserRoleInTenant(currentUser.getId(), tenantId);
+        MembershipRole currentRole = getRoleFromContextOrDb(currentUser.getId(), tenantId);
         if (!isAdminOrHigher(currentRole)) {
             throw new TenantAccessDeniedException("Insufficient permissions to update user roles");
         }
@@ -115,7 +115,7 @@ public class AdminController {
         User currentUser = authService.getOrCreateUser(jwt);
         UUID tenantId = getTenantIdFromContext(jwt);
 
-        MembershipRole role = tenantService.getUserRoleInTenant(currentUser.getId(), tenantId);
+        MembershipRole role = getRoleFromContextOrDb(currentUser.getId(), tenantId);
         if (!isAdminOrHigher(role)) {
             throw new TenantAccessDeniedException("Insufficient permissions to revoke user access");
         }
@@ -142,6 +142,23 @@ public class AdminController {
 
     private boolean isAdminOrHigher(MembershipRole role) {
         return role == MembershipRole.ADMIN || role == MembershipRole.OWNER;
+    }
+
+    /**
+     * Get role from TenantContext first (set by BFF session auth), fallback to DB lookup.
+     * This supports both JWT-based auth (with tenant claims) and BFF session-based auth.
+     */
+    private MembershipRole getRoleFromContextOrDb(UUID userId, UUID tenantId) {
+        // First check TenantContext (set by TenantContextFilter from session or JWT)
+        TenantContext.TenantInfo tenantInfo = TenantContext.getCurrentTenant();
+        if (tenantInfo != null && tenantInfo.getRole() != null) {
+            log.debug("Using role from TenantContext: {}", tenantInfo.getRole());
+            return tenantInfo.getRole();
+        }
+
+        // Fallback to database lookup
+        log.debug("Falling back to DB lookup for role");
+        return tenantService.getUserRoleInTenant(userId, tenantId);
     }
 
     public record InviteUserRequest(

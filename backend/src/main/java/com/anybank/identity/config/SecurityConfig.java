@@ -1,6 +1,7 @@
 package com.anybank.identity.config;
 
 import com.anybank.identity.security.AuditLoggingFilter;
+import com.anybank.identity.security.BffSessionAuthFilter;
 import com.anybank.identity.security.CorrelationIdFilter;
 import com.anybank.identity.security.PolicyEnforcementFilter;
 import com.anybank.identity.security.RiskEvaluationFilter;
@@ -35,6 +36,7 @@ import java.util.List;
 public class SecurityConfig {
 
     private final CorrelationIdFilter correlationIdFilter;
+    private final BffSessionAuthFilter bffSessionAuthFilter;
     private final TenantContextFilter tenantContextFilter;
     private final RiskEvaluationFilter riskEvaluationFilter;
     private final PolicyEnforcementFilter policyEnforcementFilter;
@@ -48,12 +50,14 @@ public class SecurityConfig {
         http
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .csrf(csrf -> csrf.disable())
+            // Use IF_REQUIRED for sessions - allows BFF pattern with session-based auth
             .sessionManagement(session -> session
-                .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED))
             .authorizeHttpRequests(authz -> authz
                 .requestMatchers("/actuator/**").permitAll()
                 .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
                 .requestMatchers("/debug/**").permitAll()
+                .requestMatchers("/bff/auth/**").permitAll()  // BFF auth endpoints
                 .requestMatchers("/error").permitAll()
                 .anyRequest().authenticated()
             )
@@ -63,6 +67,8 @@ public class SecurityConfig {
                     .jwtAuthenticationConverter(jwtAuthenticationConverter()))
             )
             .addFilterBefore(correlationIdFilter, UsernamePasswordAuthenticationFilter.class)
+            // BffSessionAuthFilter runs before JWT filter to enable session-based auth
+            .addFilterBefore(bffSessionAuthFilter, org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter.class)
             // TenantContextFilter must run AFTER BearerTokenAuthenticationFilter so JWT is processed
             .addFilterAfter(tenantContextFilter, org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter.class)
             .addFilterAfter(riskEvaluationFilter, TenantContextFilter.class)
@@ -109,7 +115,8 @@ public class SecurityConfig {
                 "Origin",
                 "X-Tenant-ID",
                 "X-Correlation-ID",
-                "X-Session-ID"
+                "X-Session-ID",
+                "X-Request-Source"
         ));
         configuration.setExposedHeaders(List.of("Authorization", "X-Correlation-ID"));
         configuration.setAllowCredentials(true);

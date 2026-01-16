@@ -155,6 +155,9 @@ class Router {
 
         this.currentRoute = hash;
 
+        // Close slide-over panel when navigating to a new route
+        debugState.closeSlideOver();
+
         // Update state
         debugState.update({
             'currentView': hash,

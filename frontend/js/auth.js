@@ -1,125 +1,108 @@
 /**
  * Authentication Module
- * OIDC integration with Keycloak using oidc-client-ts
+ * BFF (Backend-for-Frontend) pattern - OAuth flow handled by backend
  */
 
 import state from './state.js';
 
-// Keycloak configuration
-const KEYCLOAK_URL = 'http://localhost:8080';
-const REALM = 'anybank';
-const CLIENT_ID = 'anybank-web';
-const REDIRECT_URI = 'http://localhost:3000/#/callback';
-const POST_LOGOUT_REDIRECT_URI = 'http://localhost:3000/#/login';
-
-// OIDC UserManager instance
-let userManager = null;
+// BFF endpoints
+const BFF_LOGIN_URL = '/bff/auth/login';
+const BFF_LOGOUT_URL = '/bff/auth/logout';
 
 /**
- * Initialize the OIDC UserManager
- */
-function initUserManager() {
-    if (userManager) return userManager;
-
-    const settings = {
-        authority: `${KEYCLOAK_URL}/realms/${REALM}`,
-        client_id: CLIENT_ID,
-        redirect_uri: REDIRECT_URI,
-        post_logout_redirect_uri: POST_LOGOUT_REDIRECT_URI,
-        response_type: 'code',
-        scope: 'openid profile email',
-        filterProtocolClaims: true,
-        loadUserInfo: true,
-        automaticSilentRenew: false,
-        monitorSession: false
-    };
-
-    // Access oidc-client-ts from the global window object (loaded via CDN)
-    if (typeof oidc !== 'undefined') {
-        userManager = new oidc.UserManager(settings);
-    } else {
-        console.error('oidc-client-ts not loaded');
-        return null;
-    }
-
-    return userManager;
-}
-
-/**
- * Start the login flow (redirect to Keycloak)
+ * Start the login flow (redirect to BFF which handles OAuth)
  */
 async function login() {
-    const um = initUserManager();
-    if (!um) {
-        throw new Error('Failed to initialize authentication');
-    }
-
-    try {
-        await um.signinRedirect();
-    } catch (error) {
-        console.error('Login redirect failed:', error);
-        throw error;
-    }
+    console.log('[Auth] Starting BFF login flow');
+    // Simply redirect to the BFF login endpoint
+    // The backend will handle the OAuth redirect to Keycloak
+    window.location.href = BFF_LOGIN_URL;
 }
 
 /**
- * Handle the OAuth callback after Keycloak redirect
+ * Handle the OAuth callback after BFF redirects back.
+ * BFF pattern: tokens stay server-side, we fetch user info via API.
  * @returns {Promise<Object>} User info
  */
 async function handleCallback() {
-    const um = initUserManager();
-    if (!um) {
-        throw new Error('Failed to initialize authentication');
-    }
+    console.log('[Auth] Handling BFF callback');
 
-    try {
-        const user = await um.signinRedirectCallback();
+    // Parse callback params from URL fragment
+    const hash = window.location.hash;
+    const queryStart = hash.indexOf('?');
 
-        if (user) {
-            // Store identity token and user info in state
-            state.update({
-                'user': {
-                    id: user.profile.sub,
-                    email: user.profile.email,
-                    name: user.profile.name || user.profile.preferred_username,
-                    avatarUrl: null
-                },
-                'tokens.identity': user.access_token,
-                'tokens.expiresAt': user.expires_at ? user.expires_at * 1000 : null
-            });
-            state.persist();
+    if (queryStart !== -1) {
+        const queryString = hash.substring(queryStart + 1);
+        const params = new URLSearchParams(queryString);
 
-            return user;
+        // Check for error from BFF
+        const error = params.get('error');
+        if (error) {
+            throw new Error(`Authentication failed: ${error}`);
         }
-
-        throw new Error('No user returned from callback');
-    } catch (error) {
-        console.error('Callback handling failed:', error);
-        throw error;
     }
+
+    // Fetch user info from BFF (tokens are stored server-side)
+    console.log('[Auth] Fetching user info from BFF /bff/auth/me...');
+    console.log('[Auth] Cookies available:', document.cookie);
+
+    const response = await fetch('/bff/auth/me', {
+        method: 'GET',
+        credentials: 'include', // Include session cookies
+        headers: {
+            'Accept': 'application/json'
+        }
+    });
+
+    console.log('[Auth] /bff/auth/me response status:', response.status);
+    console.log('[Auth] /bff/auth/me response headers:', [...response.headers.entries()]);
+
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error('[Auth] /bff/auth/me failed:', errorData);
+        throw new Error(errorData.error || `Failed to fetch user info: ${response.status}`);
+    }
+
+    const userInfo = await response.json();
+
+    if (!userInfo.authenticated) {
+        throw new Error(userInfo.error || 'Not authenticated');
+    }
+
+    // Store user info in state (no tokens stored client-side - BFF pattern)
+    const user = {
+        id: userInfo.sub,
+        email: userInfo.email,
+        name: userInfo.name || userInfo.preferred_username,
+        avatarUrl: null
+    };
+
+    state.update({
+        'user': user,
+        'tokens.expiresAt': userInfo.expiresAt
+    });
+    state.persist();
+
+    // Don't change hash here - let the callback component navigate when done
+    // Changing hash triggers router's hashchange listener and causes re-renders
+
+    console.log('[Auth] BFF callback successful, user:', user.email);
+
+    return { profile: user };
 }
 
 /**
- * Logout the user
+ * Logout the user via BFF
  */
 async function logout() {
-    const um = initUserManager();
+    console.log('[Auth] Starting BFF logout');
 
     // Clear state first
     state.reset();
     state.clearStorage();
 
-    if (um) {
-        try {
-            await um.signoutRedirect();
-        } catch (error) {
-            console.error('Logout redirect failed:', error);
-            // Still navigate to login even if logout fails
-            window.location.hash = '#/login';
-        }
-    } else {
-        window.location.hash = '#/login';
-    }
+    // Redirect to BFF logout which will handle Keycloak logout
+    window.location.href = BFF_LOGOUT_URL;
 }
 
 /**

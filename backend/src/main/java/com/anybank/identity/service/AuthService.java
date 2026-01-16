@@ -1,5 +1,6 @@
 package com.anybank.identity.service;
 
+import com.anybank.identity.dto.DebugEvent;
 import com.anybank.identity.dto.TenantDto;
 import com.anybank.identity.dto.TokenExchangeRequest;
 import com.anybank.identity.dto.TokenExchangeResponse;
@@ -36,6 +37,7 @@ public class AuthService {
     private final UserMapper userMapper;
     private final WebClient.Builder webClientBuilder;
     private final DebugSessionService debugSessionService;
+    private final DebugEventService debugEventService;
 
     @Value("${keycloak.url:http://localhost:8080}")
     private String keycloakUrl;
@@ -102,6 +104,23 @@ public class AuthService {
         }
         debugSessionService.startSession(sessionId, user.getId(), user.getEmail());
 
+        // Emit login success event
+        debugEventService.emit(DebugEvent.builder()
+                .type(DebugEvent.EventType.AUTH)
+                .action("login_success")
+                .sessionId(sessionId)
+                .actor(DebugEvent.Actor.builder()
+                        .userId(user.getId())
+                        .email(user.getEmail())
+                        .build())
+                .details(Map.of(
+                        "event", "User logged in successfully",
+                        "userId", user.getId().toString(),
+                        "email", user.getEmail(),
+                        "tenantCount", tenants.size()
+                ))
+                .build());
+
         UserDto userDto = userMapper.toDto(user);
         userDto.setTenants(tenants);
         return userDto;
@@ -119,6 +138,37 @@ public class AuthService {
 
         TenantDto tenant = tenantService.getTenantForUser(user.getId(), targetTenantId);
 
+        // Emit context switch event
+        String sessionId = currentToken.getClaimAsString("sid");
+        if (sessionId == null) {
+            sessionId = currentToken.getId();
+        }
+        if (sessionId == null) {
+            sessionId = currentToken.getSubject();
+        }
+        debugEventService.emit(DebugEvent.builder()
+                .type(DebugEvent.EventType.CONTEXT_SWITCH)
+                .action("tenant_switch")
+                .sessionId(sessionId)
+                .actor(DebugEvent.Actor.builder()
+                        .userId(user.getId())
+                        .email(user.getEmail())
+                        .tenantId(targetTenantId)
+                        .tenantName(tenant.getName())
+                        .role(tenant.getRole() != null ? tenant.getRole().name() : null)
+                        .build())
+                .details(Map.of(
+                        "tenant", Map.of(
+                                "id", targetTenantId.toString(),
+                                "name", tenant.getName(),
+                                "type", tenant.getType()
+                        ),
+                        "tenantId", targetTenantId.toString(),
+                        "tenantName", tenant.getName(),
+                        "role", tenant.getRole()
+                ))
+                .build());
+
         // Perform token exchange with Keycloak
         String newAccessToken = performKeycloakTokenExchange(currentToken.getTokenValue(), targetTenantId, tenant);
 
@@ -132,6 +182,10 @@ public class AuthService {
 
     private String performKeycloakTokenExchange(String subjectToken, UUID tenantId, TenantDto tenant) {
         String tokenEndpoint = String.format("%s/realms/%s/protocol/openid-connect/token", keycloakUrl, keycloakRealm);
+        long startTime = System.currentTimeMillis();
+
+        // Emit outbound request event (action lineage: backend → keycloak)
+        emitKeycloakRequestEvent(tokenEndpoint, tenantId);
 
         try {
             MultiValueMap<String, String> formData = new LinkedMultiValueMap<>();
@@ -154,17 +208,78 @@ public class AuthService {
                     .bodyToMono(Map.class)
                     .block();
 
+            long duration = System.currentTimeMillis() - startTime;
+
             if (response != null && response.containsKey("access_token")) {
+                // Emit success response event
+                emitKeycloakResponseEvent(tokenEndpoint, true, duration, null);
                 return (String) response.get("access_token");
             }
 
             // If Keycloak exchange fails, return the original token for demo purposes
             log.warn("Keycloak token exchange did not return access_token, using original token");
+            emitKeycloakResponseEvent(tokenEndpoint, false, duration, "No access_token in response");
             return subjectToken;
         } catch (Exception e) {
+            long duration = System.currentTimeMillis() - startTime;
             log.warn("Token exchange with Keycloak failed: {}. Using original token for demo.", e.getMessage());
+            emitKeycloakResponseEvent(tokenEndpoint, false, duration, e.getMessage());
             // For demo purposes, return original token if exchange fails
             return subjectToken;
+        }
+    }
+
+    /**
+     * Emits event for outbound Keycloak API call (action lineage).
+     */
+    private void emitKeycloakRequestEvent(String endpoint, UUID tenantId) {
+        try {
+            debugEventService.emit(DebugEvent.builder()
+                    .id(UUID.randomUUID())
+                    .timestamp(Instant.now())
+                    .type(DebugEvent.EventType.TOKEN)
+                    .action("keycloak_request")
+                    .details(Map.of(
+                            "direction", "outbound",
+                            "from", "backend",
+                            "to", "keycloak",
+                            "method", "POST",
+                            "endpoint", endpoint,
+                            "operation", "token_exchange",
+                            "targetTenantId", tenantId.toString()
+                    ))
+                    .build());
+        } catch (Exception e) {
+            log.warn("Failed to emit keycloak_request event: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Emits event for Keycloak API response (action lineage).
+     */
+    private void emitKeycloakResponseEvent(String endpoint, boolean success, long duration, String error) {
+        try {
+            Map<String, Object> details = new java.util.HashMap<>();
+            details.put("direction", "inbound");
+            details.put("from", "keycloak");
+            details.put("to", "backend");
+            details.put("endpoint", endpoint);
+            details.put("operation", "token_exchange");
+            details.put("success", success);
+            details.put("duration", duration);
+            if (error != null) {
+                details.put("error", error);
+            }
+
+            debugEventService.emit(DebugEvent.builder()
+                    .id(UUID.randomUUID())
+                    .timestamp(Instant.now())
+                    .type(DebugEvent.EventType.TOKEN)
+                    .action("keycloak_response")
+                    .details(details)
+                    .build());
+        } catch (Exception e) {
+            log.warn("Failed to emit keycloak_response event: {}", e.getMessage());
         }
     }
 }

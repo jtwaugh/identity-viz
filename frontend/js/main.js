@@ -208,7 +208,7 @@ function renderAdminUsersPlaceholder() {
                         <h1 class="text-2xl font-bold text-gray-900">User Management</h1>
                         <p class="text-gray-500">Manage team members for ${currentTenant.name}</p>
                     </div>
-                    <button class="btn btn-primary">
+                    <button class="btn btn-primary demo-placeholder" data-feature="Invite User">
                         <i data-lucide="user-plus" class="w-4 h-4"></i>
                         Invite User
                     </button>
@@ -237,7 +237,7 @@ function renderAdminUsersPlaceholder() {
                                         </div>
                                     </td>
                                     <td>
-                                        <select class="select w-auto py-1 px-2 text-sm" ${member.role === 'OWNER' ? 'disabled' : ''}>
+                                        <select class="select w-auto py-1 px-2 text-sm demo-placeholder" data-feature="Role Change" ${member.role === 'OWNER' ? 'disabled' : ''}>
                                             <option value="VIEWER" ${member.role === 'VIEWER' ? 'selected' : ''}>Viewer</option>
                                             <option value="OPERATOR" ${member.role === 'OPERATOR' ? 'selected' : ''}>Operator</option>
                                             <option value="ADMIN" ${member.role === 'ADMIN' ? 'selected' : ''}>Admin</option>
@@ -251,7 +251,7 @@ function renderAdminUsersPlaceholder() {
                                     </td>
                                     <td>
                                         ${member.role !== 'OWNER' ? `
-                                            <button class="btn btn-ghost btn-sm text-red-600">
+                                            <button class="btn btn-ghost btn-sm text-red-600 demo-placeholder" data-feature="Remove User">
                                                 <i data-lucide="trash-2" class="w-4 h-4"></i>
                                                 Remove
                                             </button>
@@ -267,6 +267,19 @@ function renderAdminUsersPlaceholder() {
 
         if (window.lucide) lucide.createIcons();
         header.init();
+
+        // Demo placeholder buttons - show toast for unimplemented features
+        document.querySelectorAll('.demo-placeholder').forEach(el => {
+            const eventType = el.tagName === 'SELECT' ? 'change' : 'click';
+            el.addEventListener(eventType, (e) => {
+                if (el.tagName === 'SELECT') {
+                    // Reset select to original value
+                    e.preventDefault();
+                }
+                const feature = el.dataset.feature || 'This feature';
+                showToast(`${feature} - not included in the identity demo!`, 'info');
+            });
+        });
     });
 }
 

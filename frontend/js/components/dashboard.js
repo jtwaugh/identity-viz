@@ -153,11 +153,11 @@ function renderConsumerDashboard(user, tenant, accounts) {
                             <i data-lucide="send" class="w-5 h-5"></i>
                             Transfer Money
                         </a>
-                        <button class="btn btn-secondary w-full justify-start">
+                        <button class="btn btn-secondary w-full justify-start demo-placeholder" data-feature="Pay Bills">
                             <i data-lucide="receipt" class="w-5 h-5"></i>
                             Pay Bills
                         </button>
-                        <button class="btn btn-secondary w-full justify-start">
+                        <button class="btn btn-secondary w-full justify-start demo-placeholder" data-feature="Mobile Deposit">
                             <i data-lucide="camera" class="w-5 h-5"></i>
                             Mobile Deposit
                         </button>
@@ -230,11 +230,11 @@ function renderCommercialDashboard(user, tenant, accounts, teamMembers = MOCK_TE
                             <i data-lucide="send" class="w-5 h-5"></i>
                             Wire Transfer
                         </a>
-                        <button class="btn btn-secondary w-full justify-start">
+                        <button class="btn btn-secondary w-full justify-start demo-placeholder" data-feature="ACH Batch Payment">
                             <i data-lucide="file-text" class="w-5 h-5"></i>
                             ACH Batch Payment
                         </button>
-                        <button class="btn btn-secondary w-full justify-start">
+                        <button class="btn btn-secondary w-full justify-start demo-placeholder" data-feature="Run Payroll">
                             <i data-lucide="users" class="w-5 h-5"></i>
                             Run Payroll
                         </button>
@@ -357,6 +357,14 @@ function attachEventHandlers() {
         card.addEventListener('click', () => {
             const accountId = card.dataset.accountId;
             router.navigate(`/accounts/${accountId}`);
+        });
+    });
+
+    // Demo placeholder buttons - show toast for unimplemented features
+    document.querySelectorAll('.demo-placeholder').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const feature = btn.dataset.feature || 'This feature';
+            showToast(`${feature} - not included in the identity demo!`, 'info');
         });
     });
 }

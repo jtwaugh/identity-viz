@@ -71,14 +71,15 @@ public class DebugEvent {
      * Types of debug events.
      */
     public enum EventType {
-        UI,      // Frontend UI events
-        API,     // API request/response events
-        OPA,     // OPA policy decision events
-        DB,      // Database operation events
-        AUTH,    // Authentication events
-        TOKEN,   // Token-related events
-        AUDIT,   // Audit log events
-        ERROR    // Error events
+        UI,              // Frontend UI events
+        API,             // API request/response events
+        OPA,             // OPA policy decision events
+        DB,              // Database operation events
+        AUTH,            // Authentication events
+        TOKEN,           // Token-related events
+        CONTEXT_SWITCH,  // Tenant context switch events
+        AUDIT,           // Audit log events
+        ERROR            // Error events
     }
 
     /**

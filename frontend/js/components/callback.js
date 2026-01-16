@@ -9,10 +9,20 @@ import state from '../state.js';
 import router from '../router.js';
 import { showLoading, hideLoading, showToast } from '../ui.js';
 
+// Guard against re-entry (hashchange can trigger multiple renders)
+let isProcessing = false;
+
 /**
  * Render the callback page and process the OAuth callback
  */
 export async function render() {
+    // Prevent re-entry - callback should only process once
+    if (isProcessing) {
+        console.log('[Callback] Already processing, skipping re-entry');
+        return;
+    }
+    isProcessing = true;
+
     const app = document.getElementById('app');
 
     // Show loading state
@@ -27,10 +37,15 @@ export async function render() {
     `;
 
     try {
-        // Handle the OAuth callback
-        await auth.handleCallback();
+        console.log('[Callback] Starting callback processing...');
+        console.log('[Callback] Current URL:', window.location.href);
 
-        // Fetch user info and available tenants
+        // Handle the OAuth callback (fetches user from /bff/auth/me)
+        const authResult = await auth.handleCallback();
+        console.log('[Callback] Auth result:', authResult);
+
+        // Fetch additional user info and available tenants from /auth/me
+        console.log('[Callback] Fetching user data from API...');
         await fetchUserData();
 
         // Check available tenants
@@ -39,52 +54,70 @@ export async function render() {
         if (tenants.length === 0) {
             // No tenants available - shouldn't happen for demo users
             showToast('No organizations available for your account.', 'error');
+            isProcessing = false;
             router.navigate('/login', { replace: true });
             return;
         }
 
         if (tenants.length === 1) {
             // Single tenant - auto-select
+            isProcessing = false;
             await selectTenant(tenants[0]);
         } else {
             // Multiple tenants - show selector
+            isProcessing = false;
             router.navigate('/select-organization', { replace: true });
         }
     } catch (error) {
-        console.error('Callback processing failed:', error);
-        showToast('Authentication failed. Please try again.', 'error');
+        console.error('[Callback] Processing failed:', error);
+        console.error('[Callback] Error details:', {
+            message: error.message,
+            stack: error.stack,
+            name: error.name
+        });
+        showToast(`Authentication failed: ${error.message}`, 'error');
+        isProcessing = false;
         router.navigate('/login', { replace: true });
     }
 }
 
 /**
  * Fetch user data and available tenants from the API
+ * With BFF pattern, user info comes from /bff/auth/me (session-based)
  */
 async function fetchUserData() {
     try {
-        // Try to get user info from API
+        console.log('[Callback] Calling api.getMe() (BFF endpoint)...');
+        // Get user info from BFF endpoint (uses session cookies)
         const response = await api.getMe();
+        console.log('[Callback] api.getMe() response:', response);
 
-        if (response.user) {
-            state.set('user', {
-                id: response.user.id,
-                email: response.user.email,
-                name: response.user.display_name || response.user.email,
+        // BFF returns flat format: {authenticated, sub, email, name, ...}
+        if (response.authenticated && response.sub) {
+            const user = {
+                id: response.sub,
+                email: response.email,
+                name: response.name || response.preferred_username || response.email,
                 avatarUrl: null
-            });
-        }
+            };
+            state.set('user', user);
+            console.log('[Callback] User set in state:', user.email);
 
-        if (response.tenants) {
-            state.set('availableTenants', response.tenants);
+            // For now, generate mock tenants since BFF doesn't return tenants yet
+            // TODO: Add /bff/auth/tenants endpoint for real tenant data
+            const mockTenants = generateMockTenants(response.email);
+            state.set('availableTenants', mockTenants);
+            console.log('[Callback] Mock tenants set:', mockTenants.length);
         }
 
         state.persist();
     } catch (error) {
-        console.warn('Failed to fetch user data from API, using mock data:', error);
+        console.warn('[Callback] Failed to fetch user data from BFF, using existing state:', error);
 
-        // Use mock data for demo when API is not available
+        // Fall back to user data already in state (from auth.handleCallback)
         const user = state.get('user');
         if (user) {
+            console.log('[Callback] Using existing user from state:', user.email);
             // Generate mock tenants based on user email
             const mockTenants = generateMockTenants(user.email);
             state.set('availableTenants', mockTenants);
@@ -161,11 +194,17 @@ async function selectTenant(tenant) {
     try {
         showLoading(`Switching to ${tenant.name}...`);
 
-        // Try token exchange via API
+        // Try token exchange via BFF API (tokens stay server-side)
         const response = await api.exchangeToken(tenant.id);
+        console.log('[Callback] Token exchange response:', response);
 
-        if (response.access_token) {
-            auth.setAccessToken(response.access_token, response.expires_in || 3600);
+        // BFF returns {success, tenant_id, expires_in} - tokens stay server-side
+        if (response.success) {
+            // In BFF pattern, we don't store access tokens client-side
+            // Just record the expiry for UI purposes
+            state.update({
+                'tokens.expiresAt': Date.now() + (response.expires_in * 1000)
+            });
         }
 
         auth.setCurrentTenant({
@@ -178,9 +217,9 @@ async function selectTenant(tenant) {
         hideLoading();
         router.navigate('/dashboard', { replace: true });
     } catch (error) {
-        console.warn('Token exchange failed, using mock token:', error);
+        console.warn('[Callback] Token exchange failed, using fallback:', error);
 
-        // For demo purposes, create a mock access token scenario
+        // Fallback: set tenant context without token exchange
         auth.setCurrentTenant({
             id: tenant.id,
             name: tenant.name,
@@ -188,7 +227,7 @@ async function selectTenant(tenant) {
             role: tenant.role
         });
 
-        // Set mock access token (in real scenario this would come from the server)
+        // Set a default expiry for UI purposes
         auth.setAccessToken(auth.getIdentityToken(), 3600);
 
         hideLoading();

@@ -666,7 +666,7 @@
 
 /* Slide-over transition */
 #slide-over.open {
-    transform: translateX(0);
+    transform: translateX(0) !important;
 }
 
 /* Bottom panel collapse transition */

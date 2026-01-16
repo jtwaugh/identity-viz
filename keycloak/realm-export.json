@@ -48,10 +48,12 @@
       "secret": "**********",
       "redirectUris": [
         "http://localhost:3000/*",
+        "http://localhost:8000/*",
         "https://app.anybank.com/*"
       ],
       "webOrigins": [
         "http://localhost:3000",
+        "http://localhost:8000",
         "https://app.anybank.com"
       ],
       "publicClient": true,
@@ -76,7 +78,7 @@
       ],
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "post.logout.redirect.uris": "http://localhost:3000/*##https://app.anybank.com/*",
+        "post.logout.redirect.uris": "http://localhost:3000/*##http://localhost:8000/*##https://app.anybank.com/*",
         "oauth2.device.authorization.grant.enabled": "false",
         "backchannel.logout.session.required": "true",
         "backchannel.logout.revoke.offline.tokens": "false"

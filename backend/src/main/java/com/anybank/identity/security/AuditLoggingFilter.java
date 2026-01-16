@@ -113,6 +113,14 @@ public class AuditLoggingFilter extends OncePerRequestFilter {
                 details.put("riskScore", riskScore);
             }
 
+            // Capture request source to distinguish test vs human traffic
+            String requestSource = request.getHeader("X-Request-Source");
+            if (requestSource != null && !requestSource.isEmpty()) {
+                details.put("requestSource", requestSource);
+            } else {
+                details.put("requestSource", "user");  // Default to user traffic
+            }
+
             DebugEvent.Actor actor = null;
             if (tenantInfo != null) {
                 actor = DebugEvent.Actor.builder()

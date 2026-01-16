@@ -83,6 +83,17 @@ class DebugUITest:
             ("Debug API - Auth Keycloak Events", self.test_debug_api_auth_keycloak_events),
             ("Debug API - Auth Decode JWT", self.test_debug_api_auth_decode),
             ("Session Creation and Debug Visibility", self.test_session_appears_in_debug),
+            ("Session Timeline", self.test_session_timeline),
+            ("Session Timeline (Workflow Path)", self.test_session_timeline_workflow_path),
+            ("Session Timeline with Actions", self.test_session_timeline_with_actions),
+            ("OPA Decisions", self.test_opa_decisions_endpoint),
+            ("Risk Controls (GET)", self.test_risk_controls_get),
+            ("Risk Controls (SET/CLEAR)", self.test_risk_controls_set_and_clear),
+            ("Debug Controls State", self.test_debug_controls_state),
+            ("Time Controls", self.test_time_controls),
+            ("Policy List", self.test_policy_list),
+            ("Policy Evaluate", self.test_policy_evaluate),
+            ("Slide-over Element Exists", self.test_slide_over_element),
         ]
 
         for name, test_func in tests:
@@ -930,6 +941,1054 @@ class DebugUITest:
                 {"exception": str(e)}
             )
 
+    # ==================== Session Timeline Tests ====================
+
+    def test_session_timeline(self) -> TestResult:
+        """
+        Test session timeline endpoint.
+        First creates a session via login, then retrieves its timeline.
+        """
+        try:
+            # Step 1: Get existing sessions to find one with events
+            sessions_response = self.session.get(
+                f"{DEBUG_API_URL}/data/sessions",
+                timeout=5
+            )
+
+            if sessions_response.status_code != 200:
+                return TestResult(
+                    "Session Timeline",
+                    False,
+                    f"Failed to get sessions: {sessions_response.status_code}",
+                    {"status": sessions_response.status_code}
+                )
+
+            sessions_data = sessions_response.json()
+            sessions = sessions_data.get("sessions", [])
+
+            if not sessions:
+                # Create a session first via authentication
+                token_url = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/token"
+                token_response = self.session.post(
+                    token_url,
+                    data={
+                        "grant_type": "password",
+                        "client_id": KEYCLOAK_CLIENT_ID,
+                        "username": TEST_USER_EMAIL,
+                        "password": TEST_USER_PASSWORD,
+                        "scope": "openid profile email"
+                    },
+                    timeout=10
+                )
+
+                if token_response.status_code == 200:
+                    token_data = token_response.json()
+                    access_token = token_data.get("access_token")
+                    if access_token:
+                        # Make authenticated request to create session
+                        self.session.get(
+                            f"{BACKEND_URL}/auth/me",
+                            headers={"Authorization": f"Bearer {access_token}"},
+                            timeout=5
+                        )
+                        # Refresh sessions list
+                        sessions_response = self.session.get(
+                            f"{DEBUG_API_URL}/data/sessions",
+                            timeout=5
+                        )
+                        if sessions_response.status_code == 200:
+                            sessions = sessions_response.json().get("sessions", [])
+
+            if not sessions:
+                return TestResult(
+                    "Session Timeline",
+                    False,
+                    "No sessions available to test timeline",
+                    {}
+                )
+
+            # Step 2: Get timeline for first session
+            session_id = sessions[0].get("id")
+            timeline_response = self.session.get(
+                f"{DEBUG_API_URL}/sessions/{session_id}/timeline",
+                timeout=5
+            )
+
+            if timeline_response.status_code != 200:
+                return TestResult(
+                    "Session Timeline",
+                    False,
+                    f"Timeline endpoint returned {timeline_response.status_code}",
+                    {"status": timeline_response.status_code, "session_id": session_id}
+                )
+
+            timeline_data = timeline_response.json()
+
+            # Verify response structure
+            if "session" not in timeline_data:
+                return TestResult(
+                    "Session Timeline",
+                    False,
+                    "Timeline response missing 'session' field",
+                    {"response": timeline_data}
+                )
+
+            return TestResult(
+                "Session Timeline",
+                True,
+                f"Timeline retrieved for session {session_id[:12]}...",
+                {
+                    "session_id": session_id,
+                    "event_count": timeline_data.get("eventCount", len(timeline_data.get("events", [])))
+                }
+            )
+
+        except requests.exceptions.ConnectionError as e:
+            return TestResult(
+                "Session Timeline",
+                False,
+                f"Connection error: {str(e)}",
+                {}
+            )
+        except Exception as e:
+            return TestResult(
+                "Session Timeline",
+                False,
+                f"Unexpected error: {str(e)}",
+                {"exception": str(e)}
+            )
+
+    def test_session_timeline_workflow_path(self) -> TestResult:
+        """
+        Test session timeline via the /workflows/ path that the frontend actually uses.
+        The frontend component (session-timeline.js) calls /workflows/sessions/{id}/timeline
+        which needs to be proxied to the backend's /sessions/{id}/timeline endpoint.
+        """
+        try:
+            # Step 1: Get existing sessions to find one with events
+            sessions_response = self.session.get(
+                f"{DEBUG_API_URL}/data/sessions",
+                timeout=5
+            )
+
+            if sessions_response.status_code != 200:
+                return TestResult(
+                    "Session Timeline (Workflow Path)",
+                    False,
+                    f"Failed to get sessions: {sessions_response.status_code}",
+                    {"status": sessions_response.status_code}
+                )
+
+            sessions_data = sessions_response.json()
+            sessions = sessions_data.get("sessions", [])
+
+            if not sessions:
+                # Create a session first via authentication
+                token_url = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/token"
+                token_response = self.session.post(
+                    token_url,
+                    data={
+                        "grant_type": "password",
+                        "client_id": KEYCLOAK_CLIENT_ID,
+                        "username": TEST_USER_EMAIL,
+                        "password": TEST_USER_PASSWORD,
+                        "scope": "openid profile email"
+                    },
+                    timeout=10
+                )
+
+                if token_response.status_code == 200:
+                    token_data = token_response.json()
+                    access_token = token_data.get("access_token")
+                    if access_token:
+                        # Make authenticated request to create session
+                        self.session.get(
+                            f"{BACKEND_URL}/auth/me",
+                            headers={"Authorization": f"Bearer {access_token}"},
+                            timeout=5
+                        )
+                        # Refresh sessions list
+                        sessions_response = self.session.get(
+                            f"{DEBUG_API_URL}/data/sessions",
+                            timeout=5
+                        )
+                        if sessions_response.status_code == 200:
+                            sessions = sessions_response.json().get("sessions", [])
+
+            if not sessions:
+                return TestResult(
+                    "Session Timeline (Workflow Path)",
+                    False,
+                    "No sessions available to test timeline",
+                    {}
+                )
+
+            # Step 2: Get timeline using the /workflows/ path (as frontend does)
+            session_id = sessions[0].get("id")
+            timeline_response = self.session.get(
+                f"{DEBUG_API_URL}/workflows/sessions/{session_id}/timeline",
+                timeout=5
+            )
+
+            if timeline_response.status_code == 404:
+                return TestResult(
+                    "Session Timeline (Workflow Path)",
+                    False,
+                    "Endpoint /workflows/sessions/{id}/timeline not found - frontend uses this path but backend doesn't have it",
+                    {"status": 404, "session_id": session_id, "expected_path": f"/workflows/sessions/{session_id}/timeline"}
+                )
+
+            if timeline_response.status_code == 500:
+                return TestResult(
+                    "Session Timeline (Workflow Path)",
+                    False,
+                    f"Server error (500) - backend may be missing /workflows/sessions/{{id}}/timeline endpoint",
+                    {"status": 500, "session_id": session_id}
+                )
+
+            if timeline_response.status_code != 200:
+                return TestResult(
+                    "Session Timeline (Workflow Path)",
+                    False,
+                    f"Timeline endpoint returned {timeline_response.status_code}",
+                    {"status": timeline_response.status_code, "session_id": session_id}
+                )
+
+            timeline_data = timeline_response.json()
+
+            # Verify response structure matches what frontend expects
+            if "session" not in timeline_data:
+                return TestResult(
+                    "Session Timeline (Workflow Path)",
+                    False,
+                    "Timeline response missing 'session' field",
+                    {"response": timeline_data}
+                )
+
+            if "events" not in timeline_data:
+                return TestResult(
+                    "Session Timeline (Workflow Path)",
+                    False,
+                    "Timeline response missing 'events' field",
+                    {"response": timeline_data}
+                )
+
+            # Verify session object has expected fields for frontend display
+            session_obj = timeline_data.get("session", {})
+            expected_session_fields = ["id", "userEmail"]
+            missing_session_fields = [f for f in expected_session_fields if f not in session_obj and f.lower() not in [k.lower() for k in session_obj.keys()]]
+
+            events = timeline_data.get("events", [])
+            event_count = timeline_data.get("eventCount", len(events))
+
+            # Verify event structure if events exist
+            if events:
+                first_event = events[0]
+                expected_event_fields = ["id", "timestamp", "type", "action"]
+                missing_event_fields = [f for f in expected_event_fields if f not in first_event]
+                if missing_event_fields:
+                    return TestResult(
+                        "Session Timeline (Workflow Path)",
+                        False,
+                        f"Event missing expected fields: {missing_event_fields}",
+                        {"event_fields": list(first_event.keys())}
+                    )
+
+            return TestResult(
+                "Session Timeline (Workflow Path)",
+                True,
+                f"Timeline retrieved via /workflows/ path for session {session_id[:12]}...",
+                {
+                    "session_id": session_id,
+                    "event_count": event_count,
+                    "has_session": "session" in timeline_data,
+                    "has_events": "events" in timeline_data
+                }
+            )
+
+        except requests.exceptions.ConnectionError as e:
+            return TestResult(
+                "Session Timeline (Workflow Path)",
+                False,
+                f"Connection error: {str(e)}",
+                {}
+            )
+        except Exception as e:
+            return TestResult(
+                "Session Timeline (Workflow Path)",
+                False,
+                f"Unexpected error: {str(e)}",
+                {"exception": str(e)}
+            )
+
+    def test_session_timeline_with_actions(self) -> TestResult:
+        """
+        Integration test: Login, switch tenant, and verify these actions
+        appear as events in the session timeline.
+
+        This tests:
+        1. Login creates an AUTH event with action "login_success"
+        2. Tenant switch creates a CONTEXT_SWITCH event with action "tenant_switch"
+        3. Both events appear in the session timeline
+        """
+        try:
+            # Step 1: Authenticate with Keycloak
+            token_url = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/token"
+            token_response = self.session.post(
+                token_url,
+                data={
+                    "grant_type": "password",
+                    "client_id": KEYCLOAK_CLIENT_ID,
+                    "username": TEST_USER_EMAIL,
+                    "password": TEST_USER_PASSWORD,
+                    "scope": "openid profile email"
+                },
+                timeout=10
+            )
+
+            if token_response.status_code != 200:
+                return TestResult(
+                    "Session Timeline with Actions",
+                    False,
+                    f"Keycloak auth failed: {token_response.status_code}",
+                    {"error": token_response.text[:200]}
+                )
+
+            token_data = token_response.json()
+            access_token = token_data.get("access_token")
+
+            if not access_token:
+                return TestResult(
+                    "Session Timeline with Actions",
+                    False,
+                    "No access_token in Keycloak response",
+                    {}
+                )
+
+            auth_headers = {"Authorization": f"Bearer {access_token}"}
+
+            # Step 2: Call /auth/me to trigger login event
+            me_response = self.session.get(
+                f"{BACKEND_URL}/auth/me",
+                headers=auth_headers,
+                timeout=5
+            )
+
+            if me_response.status_code != 200:
+                return TestResult(
+                    "Session Timeline with Actions",
+                    False,
+                    f"/auth/me failed: {me_response.status_code}",
+                    {"status": me_response.status_code}
+                )
+
+            user_info = me_response.json()
+            user_email = user_info.get("email", "unknown")
+            tenants = user_info.get("tenants", [])
+
+            # Step 3: Switch to a tenant (if available) to trigger context switch event
+            tenant_switched = False
+            switched_tenant_name = None
+            if tenants and len(tenants) > 0:
+                target_tenant = tenants[0]
+                target_tenant_id = target_tenant.get("id")
+                switched_tenant_name = target_tenant.get("name")
+
+                exchange_response = self.session.post(
+                    f"{BACKEND_URL}/auth/token/exchange",
+                    headers=auth_headers,
+                    json={"targetTenantId": target_tenant_id},
+                    timeout=5
+                )
+
+                if exchange_response.status_code == 200:
+                    tenant_switched = True
+                else:
+                    # Not a failure - just means we can't test tenant switch
+                    pass
+
+            # Step 4: Get the session from debug API
+            sessions_response = self.session.get(
+                f"{DEBUG_API_URL}/data/sessions",
+                timeout=5
+            )
+
+            if sessions_response.status_code != 200:
+                return TestResult(
+                    "Session Timeline with Actions",
+                    False,
+                    f"Failed to get sessions: {sessions_response.status_code}",
+                    {"status": sessions_response.status_code}
+                )
+
+            sessions_data = sessions_response.json()
+            sessions = sessions_data.get("sessions", [])
+
+            # Find our session by user email
+            our_session = None
+            for session in sessions:
+                if session.get("userEmail") == user_email or session.get("user_email") == user_email:
+                    our_session = session
+                    break
+
+            if not our_session:
+                return TestResult(
+                    "Session Timeline with Actions",
+                    False,
+                    f"Session for {user_email} not found",
+                    {"user_email": user_email, "sessions": [s.get("userEmail") or s.get("user_email") for s in sessions]}
+                )
+
+            # Step 5: Get timeline for our session
+            session_id = our_session.get("id")
+            timeline_response = self.session.get(
+                f"{DEBUG_API_URL}/workflows/sessions/{session_id}/timeline",
+                timeout=5
+            )
+
+            if timeline_response.status_code != 200:
+                return TestResult(
+                    "Session Timeline with Actions",
+                    False,
+                    f"Timeline endpoint returned {timeline_response.status_code}",
+                    {"status": timeline_response.status_code, "session_id": session_id}
+                )
+
+            timeline_data = timeline_response.json()
+            events = timeline_data.get("events", [])
+
+            # Step 6: Verify login event exists
+            login_events = [e for e in events if e.get("type") == "AUTH" and e.get("action") == "login_success"]
+            has_login_event = len(login_events) > 0
+
+            # Step 7: Verify context switch event exists (if we did a switch)
+            context_switch_events = [e for e in events if e.get("type") == "CONTEXT_SWITCH" and e.get("action") == "tenant_switch"]
+            has_context_switch = len(context_switch_events) > 0
+
+            # Build result details
+            event_types = [e.get("type") for e in events]
+            event_actions = [e.get("action") for e in events]
+
+            # Determine pass/fail
+            if not has_login_event:
+                return TestResult(
+                    "Session Timeline with Actions",
+                    False,
+                    "Login event (AUTH/login_success) not found in timeline",
+                    {
+                        "session_id": session_id,
+                        "event_count": len(events),
+                        "event_types": list(set(event_types)),
+                        "event_actions": list(set(event_actions)),
+                        "expected": "AUTH event with action 'login_success'"
+                    }
+                )
+
+            if tenant_switched and not has_context_switch:
+                return TestResult(
+                    "Session Timeline with Actions",
+                    False,
+                    f"Context switch event not found after switching to tenant '{switched_tenant_name}'",
+                    {
+                        "session_id": session_id,
+                        "event_count": len(events),
+                        "event_types": list(set(event_types)),
+                        "event_actions": list(set(event_actions)),
+                        "switched_to": switched_tenant_name,
+                        "expected": "CONTEXT_SWITCH event with action 'tenant_switch'"
+                    }
+                )
+
+            return TestResult(
+                "Session Timeline with Actions",
+                True,
+                f"Timeline shows login event" + (f" and tenant switch to '{switched_tenant_name}'" if tenant_switched else " (no tenant switch performed)"),
+                {
+                    "session_id": session_id,
+                    "event_count": len(events),
+                    "has_login_event": has_login_event,
+                    "has_context_switch": has_context_switch,
+                    "tenant_switched": tenant_switched,
+                    "switched_tenant": switched_tenant_name,
+                    "event_types": list(set(event_types))
+                }
+            )
+
+        except requests.exceptions.ConnectionError as e:
+            return TestResult(
+                "Session Timeline with Actions",
+                False,
+                f"Connection error: {str(e)}",
+                {}
+            )
+        except Exception as e:
+            return TestResult(
+                "Session Timeline with Actions",
+                False,
+                f"Unexpected error: {str(e)}",
+                {"exception": str(e)}
+            )
+
+    # ==================== OPA Decisions Tests ====================
+
+    def test_opa_decisions_endpoint(self) -> TestResult:
+        """
+        Test OPA decisions endpoint returns valid data.
+        """
+        try:
+            response = self.session.get(
+                f"{DEBUG_API_URL}/opa/decisions",
+                timeout=5
+            )
+
+            if response.status_code != 200:
+                return TestResult(
+                    "OPA Decisions",
+                    False,
+                    f"OPA decisions endpoint returned {response.status_code}",
+                    {"status": response.status_code}
+                )
+
+            data = response.json()
+
+            # Verify response structure
+            if "decisions" not in data:
+                return TestResult(
+                    "OPA Decisions",
+                    False,
+                    "Response missing 'decisions' field",
+                    {"response": data}
+                )
+
+            decisions = data.get("decisions", [])
+            decision_count = data.get("count", len(decisions))
+
+            return TestResult(
+                "OPA Decisions",
+                True,
+                f"Got {decision_count} OPA decisions",
+                {
+                    "decision_count": decision_count,
+                    "has_decisions": len(decisions) > 0
+                }
+            )
+
+        except requests.exceptions.ConnectionError as e:
+            return TestResult(
+                "OPA Decisions",
+                False,
+                f"Connection error: {str(e)}",
+                {}
+            )
+        except Exception as e:
+            return TestResult(
+                "OPA Decisions",
+                False,
+                f"Unexpected error: {str(e)}",
+                {"exception": str(e)}
+            )
+
+    # ==================== Risk Analysis Tests ====================
+
+    def test_risk_controls_get(self) -> TestResult:
+        """
+        Test getting current risk override state.
+        """
+        try:
+            response = self.session.get(
+                f"{DEBUG_API_URL}/controls/risk",
+                timeout=5
+            )
+
+            if response.status_code != 200:
+                return TestResult(
+                    "Risk Controls (GET)",
+                    False,
+                    f"Risk controls endpoint returned {response.status_code}",
+                    {"status": response.status_code}
+                )
+
+            data = response.json()
+
+            # Verify response structure
+            if "active" not in data:
+                return TestResult(
+                    "Risk Controls (GET)",
+                    False,
+                    "Response missing 'active' field",
+                    {"response": data}
+                )
+
+            return TestResult(
+                "Risk Controls (GET)",
+                True,
+                f"Risk override active: {data.get('active')}, score: {data.get('score')}",
+                {
+                    "active": data.get("active"),
+                    "score": data.get("score")
+                }
+            )
+
+        except requests.exceptions.ConnectionError as e:
+            return TestResult(
+                "Risk Controls (GET)",
+                False,
+                f"Connection error: {str(e)}",
+                {}
+            )
+        except Exception as e:
+            return TestResult(
+                "Risk Controls (GET)",
+                False,
+                f"Unexpected error: {str(e)}",
+                {"exception": str(e)}
+            )
+
+    def test_risk_controls_set_and_clear(self) -> TestResult:
+        """
+        Test setting and clearing risk override.
+        """
+        try:
+            # Step 1: Set a risk override
+            set_response = self.session.post(
+                f"{DEBUG_API_URL}/controls/risk",
+                json={"score": 75},
+                timeout=5
+            )
+
+            if set_response.status_code != 200:
+                return TestResult(
+                    "Risk Controls (SET/CLEAR)",
+                    False,
+                    f"Failed to set risk override: {set_response.status_code}",
+                    {"status": set_response.status_code, "response": set_response.text[:200]}
+                )
+
+            # Step 2: Verify it was set
+            get_response = self.session.get(
+                f"{DEBUG_API_URL}/controls/risk",
+                timeout=5
+            )
+
+            if get_response.status_code != 200:
+                return TestResult(
+                    "Risk Controls (SET/CLEAR)",
+                    False,
+                    f"Failed to verify risk override: {get_response.status_code}",
+                    {"status": get_response.status_code}
+                )
+
+            get_data = get_response.json()
+            if not get_data.get("active") or get_data.get("score") != 75:
+                return TestResult(
+                    "Risk Controls (SET/CLEAR)",
+                    False,
+                    "Risk override was not set correctly",
+                    {"expected_score": 75, "actual": get_data}
+                )
+
+            # Step 3: Clear the risk override
+            clear_response = self.session.post(
+                f"{DEBUG_API_URL}/controls/risk",
+                json={"score": None},
+                timeout=5
+            )
+
+            if clear_response.status_code != 200:
+                return TestResult(
+                    "Risk Controls (SET/CLEAR)",
+                    False,
+                    f"Failed to clear risk override: {clear_response.status_code}",
+                    {"status": clear_response.status_code}
+                )
+
+            # Step 4: Verify it was cleared
+            final_response = self.session.get(
+                f"{DEBUG_API_URL}/controls/risk",
+                timeout=5
+            )
+
+            if final_response.status_code != 200:
+                return TestResult(
+                    "Risk Controls (SET/CLEAR)",
+                    False,
+                    f"Failed to verify cleared risk: {final_response.status_code}",
+                    {"status": final_response.status_code}
+                )
+
+            final_data = final_response.json()
+            if final_data.get("active"):
+                return TestResult(
+                    "Risk Controls (SET/CLEAR)",
+                    False,
+                    "Risk override was not cleared",
+                    {"response": final_data}
+                )
+
+            return TestResult(
+                "Risk Controls (SET/CLEAR)",
+                True,
+                "Risk override set to 75 and cleared successfully",
+                {}
+            )
+
+        except requests.exceptions.ConnectionError as e:
+            return TestResult(
+                "Risk Controls (SET/CLEAR)",
+                False,
+                f"Connection error: {str(e)}",
+                {}
+            )
+        except Exception as e:
+            return TestResult(
+                "Risk Controls (SET/CLEAR)",
+                False,
+                f"Unexpected error: {str(e)}",
+                {"exception": str(e)}
+            )
+
+    # ==================== Debug Controls State Tests ====================
+
+    def test_debug_controls_state(self) -> TestResult:
+        """
+        Test getting debug controls state.
+        """
+        try:
+            response = self.session.get(
+                f"{DEBUG_API_URL}/controls",
+                timeout=5
+            )
+
+            if response.status_code != 200:
+                return TestResult(
+                    "Debug Controls State",
+                    False,
+                    f"Controls endpoint returned {response.status_code}",
+                    {"status": response.status_code}
+                )
+
+            data = response.json()
+
+            # Verify response has expected fields (snake_case from Java record)
+            expected_fields = ["risk_override_active", "time_override_active"]
+            missing_fields = [f for f in expected_fields if f not in data]
+
+            if missing_fields:
+                return TestResult(
+                    "Debug Controls State",
+                    False,
+                    f"Response missing fields: {missing_fields}",
+                    {"response": data, "missing": missing_fields}
+                )
+
+            return TestResult(
+                "Debug Controls State",
+                True,
+                "Debug controls state retrieved successfully",
+                {
+                    "risk_override_active": data.get("risk_override_active"),
+                    "time_override_active": data.get("time_override_active")
+                }
+            )
+
+        except requests.exceptions.ConnectionError as e:
+            return TestResult(
+                "Debug Controls State",
+                False,
+                f"Connection error: {str(e)}",
+                {}
+            )
+        except Exception as e:
+            return TestResult(
+                "Debug Controls State",
+                False,
+                f"Unexpected error: {str(e)}",
+                {"exception": str(e)}
+            )
+
+    # ==================== Policy Browser Tests ====================
+
+    def test_policy_list(self) -> TestResult:
+        """
+        Test listing available policies.
+        """
+        try:
+            response = self.session.get(
+                f"{DEBUG_API_URL}/policy/policies",
+                timeout=5
+            )
+
+            if response.status_code != 200:
+                return TestResult(
+                    "Policy List",
+                    False,
+                    f"Policy list endpoint returned {response.status_code}",
+                    {"status": response.status_code}
+                )
+
+            data = response.json()
+
+            # Verify response structure
+            if "policies" not in data:
+                return TestResult(
+                    "Policy List",
+                    False,
+                    "Response missing 'policies' field",
+                    {"response": data}
+                )
+
+            policies = data.get("policies", [])
+            if len(policies) == 0:
+                return TestResult(
+                    "Policy List",
+                    False,
+                    "No policies returned",
+                    {"response": data}
+                )
+
+            # Verify policy structure
+            first_policy = policies[0]
+            required_fields = ["id", "name", "raw"]
+            missing_fields = [f for f in required_fields if f not in first_policy]
+            if missing_fields:
+                return TestResult(
+                    "Policy List",
+                    False,
+                    f"Policy missing fields: {missing_fields}",
+                    {"policy": first_policy}
+                )
+
+            return TestResult(
+                "Policy List",
+                True,
+                f"Got {len(policies)} policies",
+                {
+                    "policy_count": len(policies),
+                    "policy_names": [p.get("name") for p in policies]
+                }
+            )
+
+        except requests.exceptions.ConnectionError as e:
+            return TestResult(
+                "Policy List",
+                False,
+                f"Connection error: {str(e)}",
+                {}
+            )
+        except Exception as e:
+            return TestResult(
+                "Policy List",
+                False,
+                f"Unexpected error: {str(e)}",
+                {"exception": str(e)}
+            )
+
+    def test_slide_over_element(self) -> TestResult:
+        """
+        Test that the slide-over element exists in the debug UI HTML
+        and has the close button.
+        """
+        try:
+            response = self.session.get(
+                f"{DEBUG_UI_URL}/",
+                timeout=5
+            )
+
+            if response.status_code != 200:
+                return TestResult(
+                    "Slide-over Element",
+                    False,
+                    f"Debug UI returned {response.status_code}",
+                    {"status": response.status_code}
+                )
+
+            html = response.text
+
+            # Check for slide-over element
+            if 'id="slide-over"' not in html:
+                return TestResult(
+                    "Slide-over Element",
+                    False,
+                    "slide-over element not found in HTML",
+                    {}
+                )
+
+            # Check for close button
+            if 'id="close-slide-over"' not in html:
+                return TestResult(
+                    "Slide-over Element",
+                    False,
+                    "close-slide-over button not found in HTML",
+                    {}
+                )
+
+            # Check for slide-over title
+            if 'id="slide-over-title"' not in html:
+                return TestResult(
+                    "Slide-over Element",
+                    False,
+                    "slide-over-title element not found in HTML",
+                    {}
+                )
+
+            # Check for slide-over content area
+            if 'id="slide-over-content"' not in html:
+                return TestResult(
+                    "Slide-over Element",
+                    False,
+                    "slide-over-content element not found in HTML",
+                    {}
+                )
+
+            return TestResult(
+                "Slide-over Element",
+                True,
+                "Slide-over element and close button exist in DOM",
+                {
+                    "has_slide_over": True,
+                    "has_close_button": True,
+                    "has_title": True,
+                    "has_content": True
+                }
+            )
+
+        except requests.exceptions.ConnectionError as e:
+            return TestResult(
+                "Slide-over Element",
+                False,
+                f"Connection error: {str(e)}",
+                {}
+            )
+        except Exception as e:
+            return TestResult(
+                "Slide-over Element",
+                False,
+                f"Unexpected error: {str(e)}",
+                {"exception": str(e)}
+            )
+
+    def test_policy_evaluate(self) -> TestResult:
+        """
+        Test policy evaluation endpoint.
+        """
+        try:
+            # Test with a simple allow case
+            response = self.session.post(
+                f"{DEBUG_API_URL}/policy/evaluate",
+                json={
+                    "action": "view_balance",
+                    "user": {"roles": ["viewer"]}
+                },
+                timeout=5
+            )
+
+            if response.status_code != 200:
+                return TestResult(
+                    "Policy Evaluate",
+                    False,
+                    f"Policy evaluate endpoint returned {response.status_code}",
+                    {"status": response.status_code}
+                )
+
+            data = response.json()
+
+            # Verify response structure
+            if "result" not in data:
+                return TestResult(
+                    "Policy Evaluate",
+                    False,
+                    "Response missing 'result' field",
+                    {"response": data}
+                )
+
+            result = data.get("result", {})
+            if "allow" not in result:
+                return TestResult(
+                    "Policy Evaluate",
+                    False,
+                    "Result missing 'allow' field",
+                    {"result": result}
+                )
+
+            return TestResult(
+                "Policy Evaluate",
+                True,
+                f"Policy evaluation returned allow={result.get('allow')}",
+                {"result": result}
+            )
+
+        except requests.exceptions.ConnectionError as e:
+            return TestResult(
+                "Policy Evaluate",
+                False,
+                f"Connection error: {str(e)}",
+                {}
+            )
+        except Exception as e:
+            return TestResult(
+                "Policy Evaluate",
+                False,
+                f"Unexpected error: {str(e)}",
+                {"exception": str(e)}
+            )
+
+    # ==================== Time Controls Tests ====================
+
+    def test_time_controls(self) -> TestResult:
+        """
+        Test time override functionality.
+        """
+        try:
+            # Step 1: Get current time state
+            get_response = self.session.get(
+                f"{DEBUG_API_URL}/controls/time",
+                timeout=5
+            )
+
+            if get_response.status_code != 200:
+                return TestResult(
+                    "Time Controls",
+                    False,
+                    f"Time controls GET returned {get_response.status_code}",
+                    {"status": get_response.status_code}
+                )
+
+            data = get_response.json()
+
+            # Verify response structure
+            if "active" not in data or "effective" not in data:
+                return TestResult(
+                    "Time Controls",
+                    False,
+                    "Time response missing expected fields",
+                    {"response": data}
+                )
+
+            return TestResult(
+                "Time Controls",
+                True,
+                f"Time controls retrieved: active={data.get('active')}",
+                {
+                    "active": data.get("active"),
+                    "effective": data.get("effective")
+                }
+            )
+
+        except requests.exceptions.ConnectionError as e:
+            return TestResult(
+                "Time Controls",
+                False,
+                f"Connection error: {str(e)}",
+                {}
+            )
+        except Exception as e:
+            return TestResult(
+                "Time Controls",
+                False,
+                f"Unexpected error: {str(e)}",
+                {"exception": str(e)}
+            )
+
 
 # Pytest test functions
 @pytest.fixture
@@ -1020,6 +2079,72 @@ def test_debug_api_auth_decode(debug_test):
 def test_session_appears_in_debug(debug_test):
     """Integration test: Create session via login and verify it appears in debug UI"""
     result = debug_test.test_session_appears_in_debug()
+    assert result.passed, result.message
+
+
+def test_session_timeline(debug_test):
+    """Test session timeline endpoint returns events for a session"""
+    result = debug_test.test_session_timeline()
+    assert result.passed, result.message
+
+
+def test_session_timeline_workflow_path(debug_test):
+    """Test session timeline via /workflows/ path that frontend uses"""
+    result = debug_test.test_session_timeline_workflow_path()
+    assert result.passed, result.message
+
+
+def test_session_timeline_with_actions(debug_test):
+    """Test that login and tenant switch actions appear in session timeline"""
+    result = debug_test.test_session_timeline_with_actions()
+    assert result.passed, result.message
+
+
+def test_opa_decisions_endpoint(debug_test):
+    """Test OPA decisions endpoint returns valid data"""
+    result = debug_test.test_opa_decisions_endpoint()
+    assert result.passed, result.message
+
+
+def test_risk_controls_get(debug_test):
+    """Test getting current risk override state"""
+    result = debug_test.test_risk_controls_get()
+    assert result.passed, result.message
+
+
+def test_risk_controls_set_and_clear(debug_test):
+    """Test setting and clearing risk override"""
+    result = debug_test.test_risk_controls_set_and_clear()
+    assert result.passed, result.message
+
+
+def test_debug_controls_state(debug_test):
+    """Test getting debug controls state"""
+    result = debug_test.test_debug_controls_state()
+    assert result.passed, result.message
+
+
+def test_time_controls(debug_test):
+    """Test time override functionality"""
+    result = debug_test.test_time_controls()
+    assert result.passed, result.message
+
+
+def test_policy_list(debug_test):
+    """Test listing available policies"""
+    result = debug_test.test_policy_list()
+    assert result.passed, result.message
+
+
+def test_policy_evaluate(debug_test):
+    """Test policy evaluation endpoint"""
+    result = debug_test.test_policy_evaluate()
+    assert result.passed, result.message
+
+
+def test_slide_over_element_exists(debug_test):
+    """Test that slide-over element exists in the DOM"""
+    result = debug_test.test_slide_over_element()
     assert result.passed, result.message
 
 

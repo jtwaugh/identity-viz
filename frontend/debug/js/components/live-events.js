@@ -68,6 +68,15 @@ function renderEventRow(event) {
     const icon = EVENT_ICONS[event.type] || '&#128196;';
     const summary = getEventSummary(event);
 
+    // Check if this is test traffic (requestSource is in details from backend)
+    const data = event.data || {};
+    const details = data.details || {};
+    const requestSource = details.requestSource || data.requestSource;
+    const isTestTraffic = requestSource && requestSource !== 'user';
+    const testBadge = isTestTraffic
+        ? `<span class="px-1.5 py-0.5 text-xs rounded bg-purple-600/30 text-purple-300 border border-purple-500/30" title="Source: ${requestSource}">TEST</span>`
+        : '';
+
     return `
         <div class="flex items-center gap-3 px-3 py-1.5 hover:bg-slate-800/50 cursor-pointer border-b border-slate-700/30"
              data-event-id="${event.id}">
@@ -76,9 +85,20 @@ function renderEventRow(event) {
                 <span>${icon}</span>
                 <span>${event.type}</span>
             </span>
+            ${testBadge}
             <span class="text-slate-300 truncate flex-1">${summary}</span>
         </div>
     `;
+}
+
+/**
+ * Check if an event is from test traffic
+ */
+function isTestTrafficEvent(event) {
+    const data = event.data || {};
+    const details = data.details || {};
+    const requestSource = details.requestSource || data.requestSource;
+    return requestSource && requestSource !== 'user';
 }
 
 /**
@@ -89,9 +109,16 @@ function renderEvents() {
     const filter = debugState.get('eventsFilter') || 'all';
 
     // Filter events
-    const filteredEvents = filter === 'all'
-        ? events
-        : events.filter(e => e.type === filter);
+    let filteredEvents;
+    if (filter === 'all') {
+        filteredEvents = events;
+    } else if (filter === 'test-only') {
+        filteredEvents = events.filter(e => isTestTrafficEvent(e));
+    } else if (filter === 'user-only') {
+        filteredEvents = events.filter(e => !isTestTrafficEvent(e));
+    } else {
+        filteredEvents = events.filter(e => e.type === filter);
+    }
 
     if (filteredEvents.length === 0) {
         return `

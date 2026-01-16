@@ -2,6 +2,8 @@
 
 ## Build Specification (No Code)
 
+**All changes must pass the existing test suite in `tests/`.** Run `python tests/test_debug_ui.py` to verify. **Any new feature implemented must include concise, relevant tests** added to the test folder to maintain coverage.
+
 This document fully specifies how to build a **multi-tenant identity platform with organization switching and fine-grained access control** for a regional bank. The implementation uses **Java with Spring Boot** for the backend, **Vanilla JavaScript** for the frontend, and **ShadCN** for UI components.
 
 ---

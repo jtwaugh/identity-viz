@@ -112,7 +112,10 @@ const debugState = {
      */
     get(path) {
         if (!path) return deepClone(this._state);
-        return deepClone(getByPath(this._state, path));
+        const value = getByPath(this._state, path);
+        // Return undefined as-is (don't try to deep clone it)
+        if (value === undefined) return undefined;
+        return deepClone(value);
     },
 
     /**

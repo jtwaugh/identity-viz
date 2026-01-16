@@ -13,6 +13,7 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.annotation.Order;
@@ -56,6 +57,11 @@ public class TenantContextFilter extends OncePerRequestFilter {
                 // Fallback: try to extract from X-Tenant-ID header
                 if (tenantInfo == null) {
                     tenantInfo = extractTenantInfoFromHeader(request, jwt);
+                }
+
+                // Fallback: try to extract from session (BFF pattern)
+                if (tenantInfo == null) {
+                    tenantInfo = extractTenantInfoFromSession(request, jwt);
                 }
 
                 if (tenantInfo != null) {
@@ -149,6 +155,45 @@ public class TenantContextFilter extends OncePerRequestFilter {
             log.warn("Failed to extract tenant info from header: {}", e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * Extract tenant info from session (BFF pattern).
+     * When using BFF, the selected tenant is stored in the session after token exchange.
+     */
+    private TenantContext.TenantInfo extractTenantInfoFromSession(HttpServletRequest request, Jwt jwt) {
+        HttpSession session = request.getSession(false);
+        if (session == null) {
+            return null;
+        }
+
+        String tenantIdStr = (String) session.getAttribute("selected_tenant_id");
+        if (tenantIdStr == null || tenantIdStr.isEmpty()) {
+            log.debug("No selected_tenant_id in session for request to {}", request.getRequestURI());
+            return null;
+        }
+
+        String email = jwt.getClaimAsString("email");
+
+        // Try to parse as UUID, or use demo fallback for mock tenant IDs like "tenant-003"
+        UUID tenantId;
+        try {
+            tenantId = UUID.fromString(tenantIdStr);
+        } catch (IllegalArgumentException e) {
+            // Demo tenant ID (not a valid UUID) - create a deterministic UUID from it
+            log.debug("Using demo tenant ID: {} - creating synthetic UUID", tenantIdStr);
+            tenantId = UUID.nameUUIDFromBytes(tenantIdStr.getBytes());
+        }
+
+        // For BFF demo, use default permissions without DB lookup
+        // This avoids issues with mock tenant IDs not existing in the database
+        log.info("BFF session tenant context: tenantId={}, email={}", tenantIdStr, email);
+        return TenantContext.TenantInfo.builder()
+                .tenantId(tenantId)
+                .tenantType(TenantType.COMMERCIAL)
+                .role(MembershipRole.OWNER)
+                .userEmail(email)
+                .build();
     }
 
     @Override

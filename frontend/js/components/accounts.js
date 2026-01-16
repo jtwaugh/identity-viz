@@ -247,11 +247,11 @@ export async function renderDetails(context) {
                     <div class="flex items-center justify-between mt-4 pt-4 border-t border-gray-200">
                         <p class="text-sm text-gray-500">Showing ${transactions.length} transactions</p>
                         <div class="flex items-center gap-2">
-                            <button class="btn btn-secondary btn-sm" disabled>
+                            <button class="btn btn-secondary btn-sm demo-placeholder" data-feature="Pagination">
                                 <i data-lucide="chevron-left" class="w-4 h-4"></i>
                                 Previous
                             </button>
-                            <button class="btn btn-secondary btn-sm">
+                            <button class="btn btn-secondary btn-sm demo-placeholder" data-feature="Pagination">
                                 Next
                                 <i data-lucide="chevron-right" class="w-4 h-4"></i>
                             </button>
@@ -344,6 +344,15 @@ export async function renderDetails(context) {
             document.getElementById(`tab-${tabId}`).classList.add('active');
         });
     });
+
+    // Demo placeholder buttons - show toast for unimplemented features
+    document.querySelectorAll('.demo-placeholder').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const feature = btn.dataset.feature || 'This feature';
+            showToast(`${feature} - not included in the identity demo!`, 'info');
+        });
+    });
 }
 
 /**
@@ -432,7 +441,7 @@ function renderStatementsList() {
                     <p class="text-sm text-gray-500">PDF Statement</p>
                 </div>
             </div>
-            <button class="btn btn-ghost btn-sm">
+            <button class="btn btn-ghost btn-sm demo-placeholder" data-feature="Statement Download">
                 <i data-lucide="download" class="w-4 h-4"></i>
                 Download
             </button>

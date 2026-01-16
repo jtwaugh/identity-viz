@@ -100,11 +100,14 @@ services:
       SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI: http://keycloak:8080/realms/anybank
       SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI: http://keycloak:8080/realms/anybank/protocol/openid-connect/certs
       KEYCLOAK_JWK_URI: http://keycloak:8080/realms/anybank/protocol/openid-connect/certs
-      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_URL: http://localhost:8080
+      KEYCLOAK_INTERNAL_URL: http://keycloak:8080
       KEYCLOAK_REALM: anybank
-      KEYCLOAK_CLIENT_ID: anybank-api
-      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-anybank-api-secret}
+      KEYCLOAK_CLIENT_ID: anybank-web
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-}
       OPA_URL: http://opa:8181/v1/data/bank/authz
+      APP_FRONTEND_URL: http://localhost:3000
+      APP_BACKEND_URL: http://localhost:3000
       LOGGING_LEVEL_ROOT: INFO
       LOGGING_LEVEL_COM_ANYBANK: DEBUG
       SERVER_PORT: 8000
